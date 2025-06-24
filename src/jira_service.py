@@ -1,6 +1,8 @@
 import os
 import requests
+from dotenv import load_dotenv
 from typing import List, Dict, Any, TypedDict, NotRequired
+import json
 
 class Author(TypedDict):
     accountId: str
@@ -18,14 +20,27 @@ class Ticket(TypedDict):
     id: str
     title: str
     description: str
+    status: NotRequired[str]
     priority: NotRequired[str]
     comments: NotRequired[List[Comment]]
 
 class JiraService:
+    _instance = None
+
     def __init__(self, base_url: str, email: str, api_token: str):
         self.base_url = base_url.rstrip("/")
         self.auth = (email, api_token)
         self.headers = {"Accept": "application/json"}
+
+    @staticmethod
+    def get_instance():
+        load_dotenv()
+        if JiraService._instance is None:
+            jira_url = os.getenv("JIRA_URL")
+            jira_email = os.getenv("JIRA_EMAIL")
+            jira_token = os.getenv("JIRA_API_TOKEN")
+            JiraService._instance = JiraService(jira_url, jira_email, jira_token)
+        return JiraService._instance
 
     def fetch_user_tickets(self, user_email: str, project_key: str = None) -> List[Ticket]:
         # Build JQL with optional project filter
@@ -37,7 +52,6 @@ class JiraService:
         response = requests.get(url, headers=self.headers, params=params, auth=self.auth)
         response.raise_for_status()
         issues = response.json().get("issues", [])
-        # breakpoint()  # For debugging purposes, remove in production
 
         tickets: List[Ticket] = []
         for issue in issues:
@@ -47,18 +61,16 @@ class JiraService:
                 "title": fields.get("summary", ""),
                 "description": fields.get("description", ""),
                 "priority": fields.get("priority", {}).get("name") if fields.get("priority") else None,
-                # "comments": self.fetch_ticket_comments(issue["key"])
+                "status": fields.get("status", {}).get("name") if fields.get("status") else None,
             }
             tickets.append(ticket)
         return tickets
 
     def fetch_ticket_comments(self, issue_key: str) -> List[Comment]:
-        print("in fetch_ticket_comments")  # For debugging purposes, remove in production
         url = f"{self.base_url}/rest/api/2/issue/{issue_key}/comment"
         response = requests.get(url, headers=self.headers, auth=self.auth)
         response.raise_for_status()
         data = response.json()
-        print("Fetched comments data:", data)  # For debugging purposes, remove in production
         comments: List[Comment] = []
         for comment in data.get("comments", []):
             author_data = comment.get("author", {})
@@ -77,7 +89,6 @@ class JiraService:
             if "updated" in comment:
                 comment_obj["updated"] = comment["updated"]
             comments.append(comment_obj)
-        print("Fetched comments:", comments)  # For debugging purposes, remove in production
         return comments
 
     def add_comment(self, issue_key: str, comment_body: str) -> Dict[str, Any]:
@@ -100,3 +111,15 @@ class JiraService:
         response = requests.post(url, headers=self.headers, auth=self.auth, json=payload)
         response.raise_for_status()
         return response.status_code == 204
+    
+    def get_transitions(self, issue_key: str,) -> bool:
+        url = f"{self.base_url}/rest/api/2/issue/{issue_key}/transitions"
+        
+        response = requests.get(url, headers=self.headers, auth=self.auth)
+        response.raise_for_status()
+        return response.json().get("transitions", [])
+
+# jira_service = JiraService.get_instance()
+# issue_key = "APP-1"  # Replace with your actual issue key
+# transitions = jira_service.get_transitions(issue_key)
+# print(f"Transitions for {issue_key}: {json.dumps(transitions, indent=2)}")
