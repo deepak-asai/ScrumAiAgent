@@ -80,6 +80,8 @@ def fetch_comments(ticket_id: str, user_query: str) -> list[Comment]:
 tools = [fetch_comments, add_comment, update_status]
 llm = ChatOpenAI(model="gpt-4", temperature=0.5).bind_tools(tools)
 
+main_llm = ChatOpenAI(model="gpt-4", temperature=0.5)
+
 def print_structured_messages(messages):
     print("\n--- Conversation History ---")
     for i, msg in enumerate(messages):
@@ -126,22 +128,16 @@ def init_bot(agent_state: TicketProcessorAgentState):
     If the user does not choose any ticket, respond ONLY with the following text: bot_processing_done. Don't send any other message after this.
     """
 
-    agent_state["messages"] = []
-    # breakpoint()
-    # if agent_state["is_bot_conversation_continued"]:
-    #     response = llm.invoke(agent_state["messages"])
-    #     print("AI response: ", response.content)
-    #     agent_state["messages"].append(AIMessage(content=response.content))
     if agent_state["is_bot_starting"] or agent_state["is_bot_conversation_continued"]:
         agent_state["messages"].append(SystemMessage(content=prompt))
-        response = llm.invoke(agent_state["messages"])
+        response = main_llm.invoke(agent_state["messages"])
         print("AI response: ", response.content)
         agent_state["messages"].append(AIMessage(content=response.content))
 
     user_input = input("User: ")
     agent_state["messages"].append(HumanMessage(content=user_input))
 
-    response = llm.invoke(agent_state["messages"])
+    response = main_llm.invoke(agent_state["messages"])
     # if(isinstance(response.content)
     try:
         data = json.loads(response.content)
