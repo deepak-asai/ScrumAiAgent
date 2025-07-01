@@ -9,6 +9,7 @@ from jira_service import JiraService, Ticket, Comment
 from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from enum import Enum
+from typing import cast, NotRequired
 
 
 import os
@@ -24,7 +25,16 @@ class TicketProcessingState(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
 
+class BotFlow(str, Enum):
+    MAIN_BOT_FLOW = "main_bot_flow"
+    TICKET_PROCESSING_FLOW = "ticket_processing_flow"
+
+class SystemCommand(TypedDict):
+    command: str
+    args: NotRequired[dict]
+
 class TicketProcessorAgentState(TypedDict):
+    botFlow: BotFlow
     all_tickets: List[Ticket]
     current_ticket: Ticket
     processed_tickets: List[Ticket]  
@@ -32,6 +42,7 @@ class TicketProcessorAgentState(TypedDict):
     is_bot_conversation_continued: bool
     ticket_processing_state: TicketProcessingState
     messages: Annotated[Sequence[BaseMessage], add_messages]
+    ticket_processing_messages: Annotated[Sequence[BaseMessage], add_messages]
 
 def fetch_jira_tickets(user_id) -> list[Ticket]:
     """Fetch Jira tickets for a given user using Jira REST API."""
@@ -93,9 +104,24 @@ def print_structured_messages(messages):
             print(f"{i+1}. [{msg_type}]: {msg.content}")
     print("--- End of History ---\n")
 
+def deserialize_system_command(json_str: str) -> SystemCommand:
+    """
+    Deserialize a JSON string into a SystemCommand TypedDict.
+    Raises ValueError if the JSON is invalid or missing required keys.
+    """
+    data = json.loads(json_str)
+    if not isinstance(data, dict) or "command" not in data:
+        raise ValueError("Invalid SystemCommand format")
+    # If 'args' is missing, add it as None or an empty dict (as you prefer)
+    if "args" not in data:
+        data["args"] = None  # or data["args"] = {}
+    return cast(SystemCommand, data)
+
 def init_bot(agent_state: TicketProcessorAgentState):
     tickets = fetch_jira_tickets("deepak.a.1996@gmail.com")
     tickets_str = json.dumps(tickets, indent=2)
+
+    agent_state["messages"] = []
 
     conversation_note = (
         "This is a continuation of a previous conversation. Continue helping the user with their tickets."
@@ -116,7 +142,10 @@ def init_bot(agent_state: TicketProcessorAgentState):
     If the user selects a ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
 
     {{
-    "current_ticket": "<ticket_id>"
+        "command": "ticket_chosen",
+        "args": {{
+            "ticket_id": "<ticket_id>"
+        }},
     }}
 
     Replace <ticket_id> with the actual ticket id selected by the user.
@@ -125,7 +154,10 @@ def init_bot(agent_state: TicketProcessorAgentState):
 
     {conversation_note}
     
-    If the user does not choose any ticket, respond ONLY with the following text: bot_processing_done. Don't send any other message after this.
+    If the user does not choose any ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    {{
+        "command": "bot_processing_done"
+    }}
     """
 
     if agent_state["is_bot_starting"] or agent_state["is_bot_conversation_continued"]:
@@ -140,20 +172,23 @@ def init_bot(agent_state: TicketProcessorAgentState):
     response = main_llm.invoke(agent_state["messages"])
     # if(isinstance(response.content)
     try:
-        data = json.loads(response.content)
-        if "current_ticket" in data:
+        systemCommand = deserialize_system_command(response.content)
+        if systemCommand["command"] == "ticket_chosen" and "ticket_id" in systemCommand["args"]:
             return {
+                "botFlow": BotFlow.TICKET_PROCESSING_FLOW,
                 "is_bot_starting": False,
                 "is_bot_conversation_continued": False,
                 "ticket_processing_state": TicketProcessingState.CHOSEN,
                 "all_tickets": tickets,
-                "current_ticket": next((t for t in tickets if t["id"] == data["current_ticket"]), None),
-                "messages": list(agent_state["messages"]) + [response]
+                "current_ticket": next((t for t in tickets if t["id"] == systemCommand["args"]["ticket_id"]), None),
+                "messages": list(agent_state["messages"]),
+                "ticket_processing_messages": [response]
             }
     except (json.JSONDecodeError, TypeError):
         pass
 
     return {
+        "botFlow": BotFlow.MAIN_BOT_FLOW,
         "is_bot_starting": False,
         "is_bot_conversation_continued": False,
         "all_tickets": tickets,
@@ -205,53 +240,61 @@ def process_ticket(agent_state: TicketProcessorAgentState):
     Once the conversation is done, generate a summary of the conversation and show it the user. Check if anything else needed to be added to the comments.  Ask the if the you can add this summary as comments in the ticket. Only if the user confirms, proceed to add the comments.
 
     **Important:**
-    Once the user is done with the a ticket, respond ONLY with the following text: ticket_processing_done. Don't send any other message after this.
+    Once the user is done with the ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    {{
+        "command": "ticket_processing_done"
+    }}
 
     Ticket:
     {json.dumps(agent_state["current_ticket"], indent=2)}
     """
 
     if agent_state["ticket_processing_state"] == TicketProcessingState.CHOSEN:
-        agent_state["messages"].append(SystemMessage(content=prompt))
-        response = llm.invoke(agent_state["messages"])
+        agent_state["ticket_processing_messages"].append(SystemMessage(content=prompt))
+        response = llm.invoke(agent_state["ticket_processing_messages"])
         print("AI response: ", response.content)
-        agent_state["messages"].append(AIMessage(content=response.content))
+        agent_state["ticket_processing_messages"].append(AIMessage(content=response.content))
 
-    # breakpoint()  # For debugging purposes, remove in production
-    if agent_state["messages"] and isinstance(agent_state["messages"][-1], ToolMessage):
-        response = llm.invoke(agent_state["messages"])
+    if agent_state["ticket_processing_messages"] and isinstance(agent_state["ticket_processing_messages"][-1], ToolMessage):
+        response = llm.invoke(agent_state["ticket_processing_messages"])
         print("AI response: ", response.content)
-        agent_state["messages"].append(AIMessage(content=response.content))
+        agent_state["ticket_processing_messages"].append(AIMessage(content=response.content))
 
     user_input = input("User: ")
-    agent_state["messages"].append(HumanMessage(content=user_input))
+    agent_state["ticket_processing_messages"].append(HumanMessage(content=user_input))
 
-    response = llm.invoke(agent_state["messages"])
+    response = llm.invoke(agent_state["ticket_processing_messages"])
 
-    if response.content == "ticket_processing_done":
-        # If the user is done with the ticket processing, we can end the conversation
-        return {
-            "all_tickets": agent_state["all_tickets"],
-            "is_bot_starting": True,
-            "is_bot_conversation_continued": True,
-            "ticket_processing_state": TicketProcessingState.COMPLETED,
-            "current_ticket": agent_state["current_ticket"],
-            "messages": list(agent_state["messages"]) + [response]
-        }
+    try:
+        systemCommand = deserialize_system_command(response.content)
+        if systemCommand["command"] == "ticket_processing_done":
+            # If the user is done with the ticket processing, we can end the conversation
+            return {
+                "botFlow": BotFlow.MAIN_BOT_FLOW,
+                "all_tickets": agent_state["all_tickets"],
+                "is_bot_starting": True,
+                "is_bot_conversation_continued": True,
+                "ticket_processing_state": TicketProcessingState.COMPLETED,
+                "current_ticket": agent_state["current_ticket"],
+                "messages": [],
+                "ticket_processing_messages": []
+            }
+    except (json.JSONDecodeError, TypeError):
+        pass
     
-    
-
     # print(f"\n🤖 AI: {response.content}")
     if hasattr(response, "tool_calls") and response.tool_calls:
         print(f"🔧 USING TOOLS: {[tc['name'] for tc in response.tool_calls]}")
 
     return {
+        "botFlow": BotFlow.TICKET_PROCESSING_FLOW,
         "all_tickets": agent_state["all_tickets"],
         "is_bot_starting": False,
         "is_bot_conversation_continued": False,
         "ticket_processing_state": TicketProcessingState.IN_PROGRESS,
         "current_ticket": agent_state["current_ticket"],
-        "messages": list(agent_state["messages"]) + [response]
+        "messages": agent_state["messages"],
+        "ticket_processing_messages": list(agent_state["ticket_processing_messages"]) + [response]
     }
 
 def should_continue_main_bot(state: TicketProcessorAgentState) -> str:
@@ -262,15 +305,13 @@ def should_continue_main_bot(state: TicketProcessorAgentState) -> str:
     if not messages:
         return "continue"
     
-    # last_msg = messages[-1]
     if "ticket_processing_state" in state and state["ticket_processing_state"] == TicketProcessingState.CHOSEN:
         return "ticket_chosen"
     
     return "continue"
 
 def should_continue_ticket_processing_bot(state: TicketProcessorAgentState) -> str:
-    # breakpoint()
-    messages = state["messages"]
+    messages = state["ticket_processing_messages"]
     last_message = messages[-1]
 
     if isinstance(last_message, AIMessage) and hasattr(last_message, "tool_calls") and last_message.tool_calls:
@@ -299,7 +340,7 @@ graph.add_conditional_edges(
 )
 
 graph.add_node("process_ticket", process_ticket)
-graph.add_node("tools", ToolNode(tools))
+graph.add_node("tools", ToolNode(tools, messages_key="ticket_processing_messages"))
 
 graph.add_conditional_edges(
     "process_ticket",
@@ -310,26 +351,15 @@ graph.add_conditional_edges(
         "tools_call": "tools",
     }
 )
-# graph.add_edge("process_ticket", "tools")  # Connect process_ticket to tools
 graph.add_edge("tools", "process_ticket")
-
-
 app = graph.compile()
 
 
-# # Define the flow
-# graph.add_edge("intro_and_fetch_tickets", "ask_for_updates")
-
 def print_messages(messages):
-    # breakpoint()  # For debugging purposes, remove in production
     global prev_message
     if not messages or messages[-1].content == '':
         return
-    # if not messages or messages[-1].content is None or prev_message == messages[-1].content:
-    #     return
-    
-    # if isinstance(messages[-1], ToolMessage):
-    #     print(f"\n🛠️ AI (tool): {messages[-1].content}")
+
     elif isinstance(messages[-1], AIMessage):
         print(f"\n🤖 AI: {messages[-1].content}")
     elif isinstance(messages[-1], HumanMessage):
@@ -341,6 +371,7 @@ def main():
     print("\n ===== DRAFTER =====")
     
     state = {
+        "botFlow": BotFlow.MAIN_BOT_FLOW,
         "messages": [],
         "is_bot_starting": True,
         "is_bot_conversation_continued": False,
@@ -348,8 +379,11 @@ def main():
     }
     
     for current_step in app.stream(state, stream_mode="values"):
-        if "messages" in current_step:
+        if current_step["botFlow"] == BotFlow.MAIN_BOT_FLOW and "messages" in current_step and current_step["is_bot_conversation_continued"] == False:
             print_messages(current_step["messages"])
+        elif current_step["botFlow"] == BotFlow.TICKET_PROCESSING_FLOW and "ticket_processing_messages" in current_step:
+            print_messages(current_step["ticket_processing_messages"])
+
     
     print("\n ===== DRAFTER FINISHED =====")
 
