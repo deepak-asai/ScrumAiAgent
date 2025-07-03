@@ -2,7 +2,6 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from typing import Annotated, Sequence, TypedDict, List
 from langgraph.graph.message import add_messages
-# # from langgraph.schema import Message
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from jira_service import JiraService, Ticket, Comment
@@ -10,7 +9,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from enum import Enum
 from typing import cast, NotRequired
-
+from tools import fetch_comments, add_comment, update_status
 
 import os
 import json
@@ -24,6 +23,7 @@ class TicketProcessingState(str, Enum):
     CHOSEN = "chosen"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    END_CONVERSATION = "end_conversation"
 
 class BotFlow(str, Enum):
     MAIN_BOT_FLOW = "main_bot_flow"
@@ -36,6 +36,7 @@ class SystemCommand(TypedDict):
 class TicketProcessorAgentState(TypedDict):
     botFlow: BotFlow
     all_tickets: List[Ticket]
+    recently_processed_ticket_ids: NotRequired[List[str]]  # Optional field for recently processed ticket IDs
     current_ticket: Ticket
     processed_tickets: List[Ticket]  
     is_bot_starting: bool
@@ -48,45 +49,6 @@ def fetch_jira_tickets(user_id) -> list[Ticket]:
     """Fetch Jira tickets for a given user using Jira REST API."""
     service = JiraService.get_instance()
     return service.fetch_user_tickets(user_id, "APP")
-
-@tool
-def update_status(ticket_id: str, transition_id: str) -> str:
-    """
-    Update the status of a specific ticket.
-
-    Args:
-        ticket_id (str): The ID of the ticket to update.
-        transition_id (str): The ID of the transition to apply to the ticket.
-    """
-    service = JiraService.get_instance()
-    service.update_ticket_status(ticket_id, transition_id)
-    return "Ticket status updated successfully."
-
-@tool
-def add_comment(ticket_id: str, content: str) -> str:
-    """
-    Add a comment to a specific ticket.
-
-    Args:
-        ticket_id (str): The ID of the ticket.
-        content (str): The content of the comment to be added.
-    """
-    service = JiraService.get_instance()
-    service.add_comment(ticket_id, content)
-    return "Comment added successfully to the ticket."
-    
-@tool
-def fetch_comments(ticket_id: str, user_query: str) -> list[Comment]:
-    """
-    Fetch comments for a specific ticket and uses llm to process the comments.
-
-    Args:
-        ticket_id (str): The ID of the Jira ticket.
-        user_query (str): The user's query related to the comments.
-    """
-    service = JiraService.get_instance()
-    comments = service.fetch_ticket_comments(ticket_id)
-    return comments
 
 tools = [fetch_comments, add_comment, update_status]
 llm = ChatOpenAI(model="gpt-4", temperature=0.5).bind_tools(tools)
@@ -124,13 +86,17 @@ def init_bot(agent_state: TicketProcessorAgentState):
     agent_state["messages"] = []
 
     conversation_note = (
-        "This is a continuation of a previous conversation. Continue helping the user with their tickets."
+        """
+        This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "
+        """
         if agent_state['is_bot_conversation_continued']
         else "This is a new conversation. Start by greeting the user and helping them choose a ticket. Give a small introduction about the bot and its purpose."
     )
     
     prompt = f"""
-    You are an agent to conduct a scrum meeting. You have to sound like the manager of the user. You have a list of tickets. All these tickets are assigned to the user. These tickets will have ids, summary and description, priority and status. You should ask the user to choose a ticket to start working on. The user will reply with the ticket id. The user might need to know about any ticket's description. You should help with it. Show the list of tickets in the a format that is easy to read:
+    You are an agent to conduct a scrum meeting. 
+    {conversation_note}
+    You have to sound like the manager of the user. You have a list of tickets. All these tickets are assigned to the user. These tickets will have ids, summary and description, priority and status. You should ask the user to choose a ticket to start discussing on. The user will reply with the ticket id or name. The user might need to know about any ticket's description. You should help with it. Show the list of tickets in the a format that is easy to read:
         Ticket ID: <id>
         Summary: <summary>
         Status: <status>
@@ -138,6 +104,15 @@ def init_bot(agent_state: TicketProcessorAgentState):
         
     Tickets:
     {tickets_str}
+
+    The order of the tickets should be as follows:
+    1. Tickets with status "In Progress"
+    2. Tickets with status "To Do"
+    3. Tickets which are recently processed by the user should be shown at the end of the list.
+
+    These are the tickets ids which are recently processed by the user:
+    {agent_state["recently_processed_ticket_ids"] or []}
+    Do not tell about the recently processed tickets to the user. Just use this information to order the tickets.
 
     If the user selects a ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
 
@@ -152,11 +127,9 @@ def init_bot(agent_state: TicketProcessorAgentState):
 
     If the user has not selected a ticket, continue the conversation as usual.
 
-    {conversation_note}
-    
-    If the user does not choose any ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    If the user does not choose any ticket or if the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
     {{
-        "command": "bot_processing_done"
+        "command": "end_conversation"
     }}
     """
 
@@ -182,8 +155,16 @@ def init_bot(agent_state: TicketProcessorAgentState):
                 "all_tickets": tickets,
                 "current_ticket": next((t for t in tickets if t["id"] == systemCommand["args"]["ticket_id"]), None),
                 "messages": list(agent_state["messages"]),
+                "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
                 "ticket_processing_messages": [response]
             }
+        
+        if systemCommand["command"] == "end_conversation":
+            # If the user wants to end the conversation, we can end the conversation
+            return {
+                "ticket_processing_state": TicketProcessingState.END_CONVERSATION,
+            }
+        
     except (json.JSONDecodeError, TypeError):
         pass
 
@@ -192,6 +173,7 @@ def init_bot(agent_state: TicketProcessorAgentState):
         "is_bot_starting": False,
         "is_bot_conversation_continued": False,
         "all_tickets": tickets,
+        "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
         "messages": list(agent_state["messages"]) + [response]
     }
 
@@ -240,11 +222,15 @@ def process_ticket(agent_state: TicketProcessorAgentState):
     Once the conversation is done, generate a summary of the conversation and show it the user. Check if anything else needed to be added to the comments.  Ask the if the you can add this summary as comments in the ticket. Only if the user confirms, proceed to add the comments.
 
     **Important:**
-    Once the user is done with the ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    Once the user is done with the ticket or if the user says he is wants to work on someother ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
     {{
         "command": "ticket_processing_done"
     }}
 
+    If the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    {{
+        "command": "end_conversation"
+    }}
     Ticket:
     {json.dumps(agent_state["current_ticket"], indent=2)}
     """
@@ -276,9 +262,17 @@ def process_ticket(agent_state: TicketProcessorAgentState):
                 "is_bot_conversation_continued": True,
                 "ticket_processing_state": TicketProcessingState.COMPLETED,
                 "current_ticket": agent_state["current_ticket"],
+                "recently_processed_ticket_ids": list(set((agent_state.get("recently_processed_ticket_ids") or []) + [agent_state["current_ticket"]["id"]])),
                 "messages": [],
                 "ticket_processing_messages": []
             }
+        
+        if systemCommand["command"] == "end_conversation":
+            # If the user wants to end the conversation, we can end the conversation
+            return {
+                "ticket_processing_state": TicketProcessingState.END_CONVERSATION,
+            }
+        
     except (json.JSONDecodeError, TypeError):
         pass
     
@@ -294,11 +288,15 @@ def process_ticket(agent_state: TicketProcessorAgentState):
         "ticket_processing_state": TicketProcessingState.IN_PROGRESS,
         "current_ticket": agent_state["current_ticket"],
         "messages": agent_state["messages"],
+        "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
         "ticket_processing_messages": list(agent_state["ticket_processing_messages"]) + [response]
     }
 
 def should_continue_main_bot(state: TicketProcessorAgentState) -> str:
     """Determine if we should continue or end the conversation."""
+
+    if "ticket_processing_state" in state and state["ticket_processing_state"] == TicketProcessingState.END_CONVERSATION:
+        return "end_conversation"
 
     messages = state["messages"]
     
@@ -307,10 +305,13 @@ def should_continue_main_bot(state: TicketProcessorAgentState) -> str:
     
     if "ticket_processing_state" in state and state["ticket_processing_state"] == TicketProcessingState.CHOSEN:
         return "ticket_chosen"
-    
+   
     return "continue"
 
 def should_continue_ticket_processing_bot(state: TicketProcessorAgentState) -> str:
+    if "ticket_processing_state" in state and state["ticket_processing_state"] == TicketProcessingState.END_CONVERSATION:
+        return "end_conversation"
+    
     messages = state["ticket_processing_messages"]
     last_message = messages[-1]
 
@@ -336,6 +337,7 @@ graph.add_conditional_edges(
     {
         "continue": "init_bot",
         "ticket_chosen": "process_ticket",
+        "end_conversation": END,  # This will end the conversation
     }
 )
 
@@ -349,6 +351,7 @@ graph.add_conditional_edges(
         "continue": "process_ticket",
         "ticket_processing_done": "init_bot",
         "tools_call": "tools",
+        "end_conversation": END,
     }
 )
 graph.add_edge("tools", "process_ticket")
@@ -359,6 +362,7 @@ def print_messages(messages):
     global prev_message
     if not messages or messages[-1].content == '':
         return
+    
 
     elif isinstance(messages[-1], AIMessage):
         print(f"\n🤖 AI: {messages[-1].content}")
@@ -368,7 +372,7 @@ def print_messages(messages):
 
 # Entry point
 def main():
-    print("\n ===== DRAFTER =====")
+    print("\n ===== Scrum Bot =====")
     
     state = {
         "botFlow": BotFlow.MAIN_BOT_FLOW,
@@ -376,6 +380,7 @@ def main():
         "is_bot_starting": True,
         "is_bot_conversation_continued": False,
         "is_ticket_processing": False,
+        "recently_processed_ticket_ids": [],
     }
     
     for current_step in app.stream(state, stream_mode="values"):
@@ -385,7 +390,5 @@ def main():
             print_messages(current_step["ticket_processing_messages"])
 
     
-    print("\n ===== DRAFTER FINISHED =====")
-
 if __name__ == "__main__":
     main()
