@@ -1,0 +1,110 @@
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from jira_service import JiraService, Ticket
+from models import (
+    BotFlow,
+    BotState,
+    TicketProcessorAgentState,
+)
+from helpers import deserialize_system_command
+import json
+
+def fetch_jira_tickets(user_id) -> list[Ticket]:
+    """Fetch Jira tickets for a given user using Jira REST API."""
+    service = JiraService.get_instance()
+    return service.fetch_user_tickets(user_id, "APP")
+
+def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
+    tickets = fetch_jira_tickets("deepak.a.1996@gmail.com")
+    tickets_str = json.dumps(tickets, indent=2)
+
+    agent_state["messages"] = []
+
+    conversation_note = (
+        """
+        This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "
+        """
+        if agent_state['is_bot_conversation_continued']
+        else "This is a new conversation. Start by greeting the user and helping them choose a ticket. Give a small introduction about the bot and its purpose."
+    )
+    
+    prompt = f"""
+    You are an agent to conduct a scrum meeting. 
+    {conversation_note}
+    You have to sound like the manager of the user. You have a list of tickets. All these tickets are assigned to the user. These tickets will have ids, summary and description, priority and status. You should ask the user to choose a ticket to start discussing on. The user will reply with the ticket id or name. The user might need to know about any ticket's description. You should help with it. Show the list of tickets in the a format that is easy to read:
+        Ticket ID: <id>
+        Summary: <summary>
+        Status: <status>
+        Priority: <priority>
+        
+    Tickets:
+    {tickets_str}
+
+    The order of the tickets should be as follows:
+    1. Tickets with status "In Progress"
+    2. Tickets with status "To Do"
+    3. Tickets which are recently processed by the user should be shown at the end of the list.
+
+    These are the tickets ids which are recently processed by the user:
+    {agent_state["recently_processed_ticket_ids"] or []}
+    Do not tell about the recently processed tickets to the user. Just use this information to order the tickets.
+
+    If the user selects a ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+
+    {{
+        "command": "ticket_chosen",
+        "args": {{
+            "ticket_id": "<ticket_id>"
+        }},
+    }}
+
+    Replace <ticket_id> with the actual ticket id selected by the user.
+
+    If the user has not selected a ticket, continue the conversation as usual.
+
+    If the user does not choose any ticket or if the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    {{
+        "command": "end_conversation"
+    }}
+    """
+
+    if agent_state["is_bot_starting"] or agent_state["is_bot_conversation_continued"]:
+        agent_state["messages"].append(SystemMessage(content=prompt))
+        response = main_llm.invoke(agent_state["messages"])
+        print("AI response: ", response.content)
+        agent_state["messages"].append(AIMessage(content=response.content))
+
+    user_input = input("User: ")
+    agent_state["messages"].append(HumanMessage(content=user_input))
+
+    response = main_llm.invoke(agent_state["messages"])
+    try:
+        systemCommand = deserialize_system_command(response.content)
+        if systemCommand["command"] == "ticket_chosen" and "ticket_id" in systemCommand["args"]:
+            return {
+                "botFlow": BotFlow.TICKET_PROCESSING_FLOW,
+                "is_bot_starting": False,
+                "is_bot_conversation_continued": False,
+                "ticket_processing_state": BotState.TICKET_CHOSEN,
+                "all_tickets": tickets,
+                "current_ticket": next((t for t in tickets if t["id"] == systemCommand["args"]["ticket_id"]), None),
+                "messages": list(agent_state["messages"]),
+                "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
+                "ticket_processing_messages": [response]
+            }
+        
+        if systemCommand["command"] == "end_conversation":
+            return {
+                "ticket_processing_state": BotState.END_CONVERSATION,
+            }
+        
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return {
+        "botFlow": BotFlow.MAIN_BOT_FLOW,
+        "is_bot_starting": False,
+        "is_bot_conversation_continued": False,
+        "all_tickets": tickets,
+        "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
+        "messages": list(agent_state["messages"]) + [response]
+    }
