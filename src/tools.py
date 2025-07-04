@@ -7,7 +7,7 @@ def fetch_comments(ticket_id: str) -> list:
     Fetch comments for a specific Jira ticket.
     """
     service = JiraService.get_instance()
-    comments = service.get_comments(ticket_id)
+    comments = service.fetch_ticket_comments(ticket_id)
     return comments
 
 @tool

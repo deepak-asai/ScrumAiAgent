@@ -1,7 +1,8 @@
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from models import (
-    BotState,
     BotFlow,
+    MainBotPhase,
+    TicketProcessingBotPhase,
     TicketProcessorAgentState,
 )
 from helpers import deserialize_system_command
@@ -64,16 +65,28 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
     {json.dumps(agent_state["current_ticket"], indent=2)}
     """
 
-    if agent_state["ticket_processing_state"] == BotState.TICKET_CHOSEN:
+    if agent_state["bot_state"] == MainBotPhase.TICKET_CHOSEN:
         agent_state["ticket_processing_messages"].append(SystemMessage(content=prompt))
         response = llm.invoke(agent_state["ticket_processing_messages"])
-        print("AI response: ", response.content)
-        agent_state["ticket_processing_messages"].append(AIMessage(content=response.content))
+        return {
+            "bot_flow": BotFlow.TICKET_PROCESSING_FLOW,
+            "bot_state": TicketProcessingBotPhase.IN_PROGRESS,
+            "current_ticket": agent_state["current_ticket"],
+            "messages": agent_state["messages"],
+            "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
+            "ticket_processing_messages": list(agent_state["ticket_processing_messages"]) + [response]
+        }
 
     if agent_state["ticket_processing_messages"] and isinstance(agent_state["ticket_processing_messages"][-1], ToolMessage):
         response = llm.invoke(agent_state["ticket_processing_messages"])
-        print("AI response: ", response.content)
-        agent_state["ticket_processing_messages"].append(AIMessage(content=response.content))
+        return {
+            "bot_flow": BotFlow.TICKET_PROCESSING_FLOW,
+            "bot_state": TicketProcessingBotPhase.IN_PROGRESS,
+            "current_ticket": agent_state["current_ticket"],
+            "messages": agent_state["messages"],
+            "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
+            "ticket_processing_messages": list(agent_state["ticket_processing_messages"]) + [response]
+        }
 
     user_input = input("User: ")
     agent_state["ticket_processing_messages"].append(HumanMessage(content=user_input))
@@ -85,11 +98,8 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
         if systemCommand["command"] == "ticket_processing_done":
             # If the user is done with the ticket processing, we can end the conversation
             return {
-                "botFlow": BotFlow.MAIN_BOT_FLOW,
-                "all_tickets": agent_state["all_tickets"],
-                "is_bot_starting": True,
-                "is_bot_conversation_continued": True,
-                "ticket_processing_state": BotState.TICKET_PROCESSING_COMPLETED,
+                "bot_flow": BotFlow.MAIN_BOT_FLOW,
+                "bot_state": MainBotPhase.RESTARTED,
                 "current_ticket": agent_state["current_ticket"],
                 "recently_processed_ticket_ids": list(set((agent_state.get("recently_processed_ticket_ids") or []) + [agent_state["current_ticket"]["id"]])),
                 "messages": [],
@@ -99,7 +109,7 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
         if systemCommand["command"] == "end_conversation":
             # If the user wants to end the conversation, we can end the conversation
             return {
-                "ticket_processing_state": BotState.END_CONVERSATION,
+                "ticket_processing_state": TicketProcessingBotPhase.END_CONVERSATION,
             }
         
     except (json.JSONDecodeError, TypeError):
@@ -109,11 +119,8 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
         print(f"🔧 USING TOOLS: {[tc['name'] for tc in response.tool_calls]}")
 
     return {
-        "botFlow": BotFlow.TICKET_PROCESSING_FLOW,
-        "all_tickets": agent_state["all_tickets"],
-        "is_bot_starting": False,
-        "is_bot_conversation_continued": False,
-        "ticket_processing_state": BotState.IN_PROGRESS,
+        "bot_flow": BotFlow.TICKET_PROCESSING_FLOW,
+        "bot_state": TicketProcessingBotPhase.IN_PROGRESS,
         "current_ticket": agent_state["current_ticket"],
         "messages": agent_state["messages"],
         "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],

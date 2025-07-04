@@ -2,7 +2,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from jira_service import JiraService, Ticket
 from models import (
     BotFlow,
-    BotState,
+    MainBotPhase,
     TicketProcessorAgentState,
 )
 from helpers import deserialize_system_command
@@ -17,13 +17,13 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
     tickets = fetch_jira_tickets("deepak.a.1996@gmail.com")
     tickets_str = json.dumps(tickets, indent=2)
 
-    agent_state["messages"] = []
+    # agent_state["messages"] = []
 
     conversation_note = (
         """
         This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "
         """
-        if agent_state['is_bot_conversation_continued']
+        if agent_state['bot_state'] == MainBotPhase.RESTARTED
         else "This is a new conversation. Start by greeting the user and helping them choose a ticket. Give a small introduction about the bot and its purpose."
     )
     
@@ -67,11 +67,15 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
     }}
     """
 
-    if agent_state["is_bot_starting"] or agent_state["is_bot_conversation_continued"]:
+    if agent_state["bot_state"] == MainBotPhase.NOT_STARTED or agent_state["bot_state"] == MainBotPhase.RESTARTED:
         agent_state["messages"].append(SystemMessage(content=prompt))
         response = main_llm.invoke(agent_state["messages"])
-        print("AI response: ", response.content)
-        agent_state["messages"].append(AIMessage(content=response.content))
+        return {
+            "bot_flow": BotFlow.MAIN_BOT_FLOW,
+            "bot_state": MainBotPhase.IN_PROGRESS,
+            "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
+            "messages": list(agent_state["messages"]) + [response]
+        }
 
     user_input = input("User: ")
     agent_state["messages"].append(HumanMessage(content=user_input))
@@ -81,11 +85,8 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
         systemCommand = deserialize_system_command(response.content)
         if systemCommand["command"] == "ticket_chosen" and "ticket_id" in systemCommand["args"]:
             return {
-                "botFlow": BotFlow.TICKET_PROCESSING_FLOW,
-                "is_bot_starting": False,
-                "is_bot_conversation_continued": False,
-                "ticket_processing_state": BotState.TICKET_CHOSEN,
-                "all_tickets": tickets,
+                "bot_flow": BotFlow.TICKET_PROCESSING_FLOW,
+                "bot_state": MainBotPhase.TICKET_CHOSEN,
                 "current_ticket": next((t for t in tickets if t["id"] == systemCommand["args"]["ticket_id"]), None),
                 "messages": list(agent_state["messages"]),
                 "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
@@ -94,17 +95,15 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
         
         if systemCommand["command"] == "end_conversation":
             return {
-                "ticket_processing_state": BotState.END_CONVERSATION,
+                "bot_state": MainBotPhase.END_CONVERSATION,
             }
         
     except (json.JSONDecodeError, TypeError):
         pass
 
     return {
-        "botFlow": BotFlow.MAIN_BOT_FLOW,
-        "is_bot_starting": False,
-        "is_bot_conversation_continued": False,
-        "all_tickets": tickets,
+        "bot_flow": BotFlow.MAIN_BOT_FLOW,
+        "bot_state": MainBotPhase.IN_PROGRESS,
         "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
         "messages": list(agent_state["messages"]) + [response]
     }
