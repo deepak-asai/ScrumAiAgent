@@ -111,7 +111,7 @@ def main():
     }
     
     for current_step in app.stream(state, stream_mode="values"):
-        if current_step["bot_flow"] == BotFlow.MAIN_BOT_FLOW and "messages" in current_step:
+        if current_step["bot_flow"] == BotFlow.MAIN_BOT_FLOW and "messages" in current_step and current_step["bot_state"] != MainBotPhase.RESTARTED:
             print_messages(current_step["messages"])
         elif current_step["bot_flow"] == BotFlow.TICKET_PROCESSING_FLOW and "ticket_processing_messages" in current_step:
             print_messages(current_step["ticket_processing_messages"])

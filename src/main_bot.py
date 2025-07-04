@@ -42,11 +42,6 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
     The order of the tickets should be as follows:
     1. Tickets with status "In Progress"
     2. Tickets with status "To Do"
-    3. Tickets which are recently processed by the user should be shown at the end of the list.
-
-    These are the tickets ids which are recently processed by the user:
-    {agent_state["recently_processed_ticket_ids"] or []}
-    Do not tell about the recently processed tickets to the user. Just use this information to order the tickets.
 
     If the user selects a ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
 
@@ -67,8 +62,25 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
     }}
     """
 
-    if agent_state["bot_state"] == MainBotPhase.NOT_STARTED or agent_state["bot_state"] == MainBotPhase.RESTARTED:
+    restarted_bot_prompt = (
+        f"""
+        Previous ticket which the user chose has been discussed. This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "
+
+        The user recently processed the following tickets: 
+        {agent_state["recently_processed_ticket_ids"] or []}
+
+        Show the recently processed tickets at the last. Do not tell about the recently discussed ticket to the user. Just start the conversation with to choose the next ticket or end the conversation.
+        
+        If the user again chooses a recently discussed ticket, confirm with the user that they want to continue with the same ticket or if they want to choose a different ticket.
+        """
+    )
+
+    if agent_state["bot_state"] == MainBotPhase.NOT_STARTED:
         agent_state["messages"].append(SystemMessage(content=prompt))
+    elif agent_state["bot_state"] == MainBotPhase.RESTARTED:
+        agent_state["messages"].append(SystemMessage(content=restarted_bot_prompt))
+    
+    if agent_state["bot_state"] in [MainBotPhase.NOT_STARTED, MainBotPhase.RESTARTED]:
         response = main_llm.invoke(agent_state["messages"])
         return {
             "bot_flow": BotFlow.MAIN_BOT_FLOW,
