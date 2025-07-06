@@ -26,7 +26,7 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
         if agent_state['bot_state'] == MainBotPhase.RESTARTED
         else "This is a new conversation. Start by greeting the user and helping them choose a ticket. Give a small introduction about the bot and its purpose."
     )
-    
+
     prompt = f"""
     You are an agent to conduct a scrum meeting. 
     {conversation_note}
@@ -35,6 +35,8 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
         Summary: <summary>
         Status: <status>
         Priority: <priority>
+        Start Date: <start_date>
+        Due Date: <due_date>
         
     Tickets:
     {tickets_str}
@@ -89,7 +91,7 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
             "messages": list(agent_state["messages"]) + [response]
         }
 
-    user_input = input("User: ")
+    user_input = input("\n👤 User: ")
     agent_state["messages"].append(HumanMessage(content=user_input))
 
     response = main_llm.invoke(agent_state["messages"])

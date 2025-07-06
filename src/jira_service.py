@@ -62,6 +62,8 @@ class JiraService:
                 "description": fields.get("description", ""),
                 "priority": fields.get("priority", {}).get("name") if fields.get("priority") else None,
                 "status": fields.get("status", {}).get("name") if fields.get("status") else None,
+                "start_date": fields.get("customfield_10015"),
+                "due_date": fields.get("duedate"),
             }
             tickets.append(ticket)
         return tickets
@@ -119,7 +121,49 @@ class JiraService:
         response.raise_for_status()
         return response.json().get("transitions", [])
 
+    def update_ticket_dates(self, issue_key: str, start_date: str = None, end_date: str = None) -> bool:
+        """
+        Update the start date and/or end date (due date) of a Jira ticket.
+        Dates should be in ISO format: 'YYYY-MM-DD'.
+        """
+        url = f"{self.base_url}/rest/api/2/issue/{issue_key}"
+        fields = {}
+        if start_date:
+            fields["customfield_10015"] = start_date  # Replace with your Jira instance's actual custom field ID for start date
+        if end_date:
+            fields["duedate"] = end_date  # 'duedate' is standard for end/due date in Jira
+
+        if not fields:
+            raise ValueError("At least one of start_date or end_date must be provided.")
+
+        payload = {"fields": fields}
+        response = requests.put(url, headers=self.headers, auth=self.auth, json=payload)
+        response.raise_for_status()
+        return response.status_code == 204
+
+
+# Example usage:
 # jira_service = JiraService.get_instance()
-# issue_key = "APP-1"  # Replace with your actual issue key
+# jira_service.update_ticket_dates(
+#     issue_key="APP-1",  # Replace with your actual issue key
+#     start_date="2025-10-01",
+#     end_date="2025-10-31"
+# )
+# issue_key = "APP-1" 
 # transitions = jira_service.get_transitions(issue_key)
 # print(f"Transitions for {issue_key}: {json.dumps(transitions, indent=2)}")
+
+# import os
+# import requests
+
+# JIRA_URL = os.getenv("JIRA_URL")
+# JIRA_EMAIL = os.getenv("JIRA_EMAIL")
+# JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
+
+# url = f"{JIRA_URL.rstrip('/')}/rest/api/2/field"
+# response = requests.get(url, auth=(JIRA_EMAIL, JIRA_API_TOKEN), headers={"Accept": "application/json"})
+# response.raise_for_status()
+# fields = response.json()
+
+# import json
+# print(json.dumps(fields, indent=2))

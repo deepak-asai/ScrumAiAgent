@@ -3,7 +3,7 @@ from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
-from tools import fetch_comments, add_comment, update_status
+from tools import current_date, fetch_comments, add_comment, update_status, update_ticket_dates
 from models import (
     BotFlow,
     MainBotPhase,
@@ -17,12 +17,12 @@ load_dotenv()
 prev_message = ""
 bot_messages = []
 
-tools = [fetch_comments, add_comment, update_status]
+tools = [current_date, fetch_comments, add_comment, update_status, update_ticket_dates]
 llm = ChatOpenAI(model="gpt-4", temperature=0.5).bind_tools(tools)
 main_bot_llm = ChatOpenAI(model="gpt-4", temperature=0.5)
 
 
-def should_continue_main_bot(state: TicketProcessorAgentState) -> str:
+def main_bot_flow_decision(state: TicketProcessorAgentState) -> str:
     """Determine if we should continue or end the conversation."""
 
     if "bot_state" in state and state["bot_state"] == MainBotPhase.COMPLETED:
@@ -34,11 +34,11 @@ def should_continue_main_bot(state: TicketProcessorAgentState) -> str:
         return "continue"
 
     if "bot_state" in state and state["bot_state"] == MainBotPhase.TICKET_CHOSEN:
-        return "ticket_chosen"
+        return "ticket_processing_bot"
    
     return "continue"
 
-def should_continue_ticket_processing_bot(state: TicketProcessorAgentState) -> str:
+def ticket_processing_bot_flow_decision(state: TicketProcessorAgentState) -> str:
     if "bot_state" in state and state["bot_state"] == TicketProcessingBotPhase.END_CONVERSATION:
         return "end_conversation"
     
@@ -52,7 +52,7 @@ def should_continue_ticket_processing_bot(state: TicketProcessorAgentState) -> s
         return "continue"
 
     if "bot_state" in state and state["bot_state"] == MainBotPhase.RESTARTED:
-        return "ticket_processing_done"
+        return "main_bot"
     
     return "continue"
 
@@ -63,10 +63,10 @@ graph.set_entry_point("main_bot")
 
 graph.add_conditional_edges(
     "main_bot",
-    should_continue_main_bot,
+    main_bot_flow_decision,
     {
         "continue": "main_bot",
-        "ticket_chosen": "ticket_processing_bot",
+        "ticket_processing_bot": "ticket_processing_bot",
         "end_conversation": END,  # This will end the conversation
     }
 )
@@ -76,10 +76,10 @@ graph.add_node("tools", ToolNode(tools, messages_key="ticket_processing_messages
 
 graph.add_conditional_edges(
     "ticket_processing_bot",
-    should_continue_ticket_processing_bot,
+    ticket_processing_bot_flow_decision,
     {
         "continue": "ticket_processing_bot",
-        "ticket_processing_done": "main_bot",
+        "main_bot": "main_bot",
         "tools_call": "tools",
         "end_conversation": END,
     }

@@ -6,7 +6,28 @@ from models import (
     TicketProcessorAgentState,
 )
 from helpers import deserialize_system_command
+from tools import current_date
 import json
+from datetime import datetime
+from jira_service import Ticket
+
+
+def get_due_soon_note(ticket: Ticket) -> str:
+    due_date_str = ticket.get("due_date") or ticket.get("duedate")
+    today = datetime.strptime(current_date.invoke({}), "%Y-%m-%d").date()
+    if due_date_str:
+        try:
+            due_date = datetime.strptime(due_date_str, "%Y-%m-%d").date()
+            if (due_date - today).days <= 2:
+                return (
+                    f'Note: The due date for this ticket is {due_date_str}, which is approaching soon. '
+                    'Ask the user if this due date is acceptable and if they will be able to complete the ticket on time. '
+                    'If not, prompt the user to provide a new due date and offer to update it using the tool.'
+                )
+        except Exception:
+            pass
+    return ""
+                   
 
 def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
     ticket = agent_state["current_ticket"]
@@ -28,41 +49,35 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
         status_note = (
             "Handle the ticket appropriately based on its status. If unsure, ask the user how they want to proceed."
         )
+
     prompt = f"""
-    You are an agent to conduct a scrum meeting. Do not simulate the user's responses. You have to sound like the manager of the user.
-    The user has chosen to work on this ticket. {status_note}
+    You are an agent to conduct a scrum meeting. You have to sound like the user's manager. Do not start with any greeting or introduction.
+    The user has chosen to work on this ticket:
 
-    **Important:**  
-    Ask only one question at a time. After the user responds, ask the next relevant question. Do not ask multiple questions in a single message. No need to tell the user that what all questions you will be asking. Just ask the questions one by one.
-    After every AI response, ask the user the next question based on the conversation.
+    {json.dumps(ticket, indent=2)}
 
-    You can use the tools for updating the status of the ticket or fetching the comments of the ticket. 
-    You should also ask the user if they want to update the status of the ticket or add a comment to it.
+    {status_note}
 
-    When updating the status of the ticket, use the following transition IDs for the corresponding statuses: 
-    {{
-        "To Do": "11",
-        "In Progress": "21",
-        "Done": "31"
-        "Blocked": "2"
-    }}
-
-    Once you are done with these, ask the user if they want any other help on this current ticket. If you feel there is no other input needed from the user.
-     
-    Once the conversation is done, generate a summary of the conversation and show it the user. Check if anything else needed to be added to the comments.  Ask the if the you can add this summary as comments in the ticket. Only if the user confirms, proceed to add the comments.
-
-    **Important:**
-    Once the user is done with the ticket or if the user says he is wants to work on someother ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    **Instructions:**
+    - Ask only one question at a time. Wait for the user's response before asking the next question.
+    - If the user wants to update the ticket status, use the following transition IDs:
+    "To Do": "11", "In Progress": "21", "Done": "31", "Blocked": "2"
+    - **Whenever the status is set to "In Progress", you MUST call the tool to update the start date to today's date (YYYY-MM-DD).**
+    - Ask the user for a due date if it is not already set, and offer to update it using the tool.
+    - {get_due_soon_note(ticket) or ""}
+    - You can use tools to update status, fetch comments, or add comments.
+    - If the user is done with this ticket or if the user says he is wants to work on someother ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
     {{
         "command": "ticket_processing_done"
     }}
-
-    If the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    - If the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
     {{
         "command": "end_conversation"
     }}
-    Ticket:
-    {json.dumps(agent_state["current_ticket"], indent=2)}
+    - Otherwise, continue the conversation as the scrum manager.
+    - After the conversation about this ticket is finished, create a summary of what was discussed and show it to the user. Check if there is any important information that should be added to the ticket as a comment. Ask the user if you should add this summary as a comment to the ticket. Only add the summary as a comment if the user says yes.
+
+    Remember: Do not simulate user responses. Only ask or answer as the agent.
     """
 
     if agent_state["bot_state"] == MainBotPhase.TICKET_CHOSEN:
@@ -88,7 +103,7 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
             "ticket_processing_messages": list(agent_state["ticket_processing_messages"]) + [response]
         }
 
-    user_input = input("User: ")
+    user_input = input("\n👤 User: ")
     agent_state["ticket_processing_messages"].append(HumanMessage(content=user_input))
 
     response = llm.invoke(agent_state["ticket_processing_messages"])
