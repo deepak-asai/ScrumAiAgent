@@ -27,7 +27,9 @@ def get_due_soon_note(ticket: Ticket) -> str:
         except Exception:
             pass
     return ""
-                   
+
+def is_last_message_tool_call(agent_state: TicketProcessorAgentState) -> bool:
+    return agent_state["ticket_processing_messages"] and isinstance(agent_state["ticket_processing_messages"][-1], ToolMessage)
 
 def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
     ticket = agent_state["current_ticket"]
@@ -35,9 +37,10 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
 
     if ticket_status == "to do":
         status_note = (
-            "The ticket is in 'To Do' status. You should help the user with all basic information about the ticket, "
-            "such as description, priority, and any clarifications. Ask the user what their plan is for the day regarding this ticket. "
-            "Guide the user step by step through the process of starting work on this ticket."
+            "- The ticket is in 'To Do' status. You should help the user with all basic information about the ticket, "
+            "such as description, priority, and any clarifications. "
+            "- Ask the user what their plan is for the day regarding this ticket. "
+            "- Guide the user step by step through the process of starting work on this ticket."
         )
     elif ticket_status == "in progress":
         status_note = (
@@ -58,11 +61,13 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
 
     {status_note}
 
-    **Instructions:**
+    Follow all these instructions strictly. Do not skip any of them:
     - Ask only one question at a time. Wait for the user's response before asking the next question.
     - If the user wants to update the ticket status, use the following transition IDs:
     "To Do": "11", "In Progress": "21", "Done": "31", "Blocked": "2"
-    - **Whenever the status is set to "In Progress", you MUST call the tool to update the start date to today's date (YYYY-MM-DD).**
+    - You should also ask the user if they want to update the status of the ticket or add a comment to it.
+    - Confirm with the user before updating the status of the ticket
+    - Whenever the status is set to "In Progress", you MUST call the tool to update the start date to today's date (YYYY-MM-DD).**
     - Ask the user for a due date if it is not already set, and offer to update it using the tool.
     - {get_due_soon_note(ticket) or ""}
     - You can use tools to update status, fetch comments, or add comments.
@@ -75,24 +80,15 @@ def ticket_processing_bot(agent_state: TicketProcessorAgentState, llm):
         "command": "end_conversation"
     }}
     - Otherwise, continue the conversation as the scrum manager.
-    - After the conversation about this ticket is finished, create a summary of what was discussed and show it to the user. Check if there is any important information that should be added to the ticket as a comment. Ask the user if you should add this summary as a comment to the ticket. Only add the summary as a comment if the user says yes.
+    - ** After the conversation about this ticket is finished, create a summary of what was discussed and show it to the user. Check if there is any important information that should be added to the ticket as a comment. Ask the user if you should add this summary as a comment to the ticket. Only add the summary as a comment if the user says yes. **
 
     Remember: Do not simulate user responses. Only ask or answer as the agent.
     """
 
     if agent_state["bot_state"] == MainBotPhase.TICKET_CHOSEN:
         agent_state["ticket_processing_messages"].append(SystemMessage(content=prompt))
-        response = llm.invoke(agent_state["ticket_processing_messages"])
-        return {
-            "bot_flow": BotFlow.TICKET_PROCESSING_FLOW,
-            "bot_state": TicketProcessingBotPhase.IN_PROGRESS,
-            "current_ticket": agent_state["current_ticket"],
-            "messages": agent_state["messages"],
-            "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
-            "ticket_processing_messages": list(agent_state["ticket_processing_messages"]) + [response]
-        }
 
-    if agent_state["ticket_processing_messages"] and isinstance(agent_state["ticket_processing_messages"][-1], ToolMessage):
+    if agent_state["bot_state"] == MainBotPhase.TICKET_CHOSEN or is_last_message_tool_call(agent_state):
         response = llm.invoke(agent_state["ticket_processing_messages"])
         return {
             "bot_flow": BotFlow.TICKET_PROCESSING_FLOW,

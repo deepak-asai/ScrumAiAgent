@@ -17,8 +17,7 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
     tickets = fetch_jira_tickets("deepak.a.1996@gmail.com")
     tickets_str = json.dumps(tickets, indent=2)
 
-    # agent_state["messages"] = []
-
+    breakpoint()  # For debugging purposes, remove in production
     conversation_note = (
         """
         This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "
@@ -27,60 +26,113 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
         else "This is a new conversation. Start by greeting the user and helping them choose a ticket. Give a small introduction about the bot and its purpose."
     )
 
+    # prompt = f"""
+    # You are an agent to conduct a scrum meeting. 
+    # {conversation_note}
+    # You have to sound like the manager of the user. You have a list of tickets. All these tickets are assigned to the user. These tickets will have ids, summary and description, priority and status. You should ask the user to choose a ticket to start discussing on. The user will reply with the ticket id or name. The user might need to know about any ticket's description. You should help with it. Show the list of tickets in the a format that is easy to read:
+    #     Ticket ID: <id>
+    #     Summary: <summary>
+    #     Status: <status>
+    #     Priority: <priority>
+    #     Start Date: <start_date>
+    #     Due Date: <due_date>
+        
+    # Tickets:
+    # {tickets_str}
+
+    # The order of the tickets should be as follows:
+    # 1. Tickets with status "In Progress"
+    # 2. Tickets with status "To Do"
+
+    # If the user selects a ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+
+    # {{
+    #     "command": "ticket_chosen",
+    #     "args": {{
+    #         "ticket_id": "<ticket_id>"
+    #     }},
+    # }}
+
+    # Replace <ticket_id> with the actual ticket id selected by the user.
+
+    # If the user has not selected a ticket, continue the conversation as usual.
+
+    # If the user does not choose any ticket or if the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+    # {{
+    #     "command": "end_conversation"
+    # }}
+    # """
+
+    restarted_bot_prompt = f"""
+    - Previous ticket discussion is complete. This is a continuation of the scrum meeting.
+    - Ask the user which ticket they want to discuss next, or if they want to end the conversation.
+    - Recently processed tickets: {agent_state["recently_processed_ticket_ids"] or []}
+        (Show these at the end of the list. Do not mention them explicitly.)
+    - If the user selects a recently discussed ticket, confirm if they want to continue with it or choose a different ticket.
+    """
+
     prompt = f"""
-    You are an agent to conduct a scrum meeting. 
-    {conversation_note}
-    You have to sound like the manager of the user. You have a list of tickets. All these tickets are assigned to the user. These tickets will have ids, summary and description, priority and status. You should ask the user to choose a ticket to start discussing on. The user will reply with the ticket id or name. The user might need to know about any ticket's description. You should help with it. Show the list of tickets in the a format that is easy to read:
+    You are an agent conducting a scrum meeting. Speak as the user's manager. {conversation_note}
+
+    Context:
+    - You have a list of tickets assigned to the user.
+    - Each ticket has: Ticket ID, Summary, Status, Priority, Start Date, Due Date.
+
+    Follow all these instructions strictly. Do not skip any of them:
+    - Show the list of tickets in this format:
         Ticket ID: <id>
         Summary: <summary>
         Status: <status>
         Priority: <priority>
         Start Date: <start_date>
         Due Date: <due_date>
-        
+    - Order the tickets as follows:
+        1. Tickets with status "In Progress"
+        2. Tickets with status "To Do"
+        3. Recently processed tickets (show these last; do not mention them explicitly to the user)
+    - {restarted_bot_prompt}
+    - Ask the user to choose a ticket to discuss, or if they want to end the conversation.
+    - If the user requests a ticket's description, provide it.
+    - If the user selects a ticket, respond ONLY with this JSON (no extra text):
+        {{
+            "command": "ticket_chosen",
+            "args": {{
+                "ticket_id": "<ticket_id>"
+            }}
+        }}
+        (Replace <ticket_id> with the actual ticket id.)
+    - If the user does not select a ticket, continue the conversation.
+    - If the user wants to end the conversation, respond ONLY with:
+        {{
+            "command": "end_conversation"
+        }}
+
     Tickets:
     {tickets_str}
-
-    The order of the tickets should be as follows:
-    1. Tickets with status "In Progress"
-    2. Tickets with status "To Do"
-
-    If the user selects a ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-
-    {{
-        "command": "ticket_chosen",
-        "args": {{
-            "ticket_id": "<ticket_id>"
-        }},
-    }}
-
-    Replace <ticket_id> with the actual ticket id selected by the user.
-
-    If the user has not selected a ticket, continue the conversation as usual.
-
-    If the user does not choose any ticket or if the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-    {{
-        "command": "end_conversation"
-    }}
     """
 
-    restarted_bot_prompt = (
-        f"""
-        Previous ticket which the user chose has been discussed. This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "
+    # restarted_bot_prompt = (
+    #     f"""
+    #     Previous ticket which the user chose has been discussed. This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "
 
-        The user recently processed the following tickets: 
-        {agent_state["recently_processed_ticket_ids"] or []}
+    #     The user recently processed the following tickets: 
+    #     {agent_state["recently_processed_ticket_ids"] or []}
 
-        Show the recently processed tickets at the last. Do not tell about the recently discussed ticket to the user. Just start the conversation with to choose the next ticket or end the conversation.
+    #     Show the recently processed tickets at the last. Do not tell about the recently discussed ticket to the user. Just start the conversation with to choose the next ticket or end the conversation.
         
-        If the user again chooses a recently discussed ticket, confirm with the user that they want to continue with the same ticket or if they want to choose a different ticket.
-        """
-    )
+    #     If the user again chooses a recently discussed ticket, confirm with the user that they want to continue with the same ticket or if they want to choose a different ticket.
+    #     """
+    # )
+    
 
-    if agent_state["bot_state"] == MainBotPhase.NOT_STARTED:
+    breakpoint()  # For debugging purposes, remove in production
+
+
+    if agent_state["bot_state"] == MainBotPhase.RESTARTED:
+        agent_state["messages"] = []
+
+    if agent_state["bot_state"] == MainBotPhase.NOT_STARTED or MainBotPhase.RESTARTED:
         agent_state["messages"].append(SystemMessage(content=prompt))
-    elif agent_state["bot_state"] == MainBotPhase.RESTARTED:
-        agent_state["messages"].append(SystemMessage(content=restarted_bot_prompt))
     
     if agent_state["bot_state"] in [MainBotPhase.NOT_STARTED, MainBotPhase.RESTARTED]:
         response = main_llm.invoke(agent_state["messages"])
