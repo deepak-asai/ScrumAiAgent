@@ -10,57 +10,36 @@ from langchain_core.messages import ToolMessage
 import json
 
 tools = [current_date, fetch_comments, add_comment, update_status, update_ticket_dates]
-llm = ChatOpenAI(model="gpt-4", temperature=0.5).bind_tools(tools)
+llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.5).bind_tools(tools)
 
-def execute_stage(state: ScrumAgentTicketProcessorState):
-    # breakpoint()
-    if state["current_stage"] == 2:
-        breakpoint()
+def handler_not_started_phase(state: ScrumAgentTicketProcessorState):
     current_stage_id = state["current_stage"]
     current_stage = state["stages"][current_stage_id]
 
-    if current_stage["phase"] == TicketProcessorPhase.PROCEED_TO_NEXT_STAGE:
-        state["current_stage"] = current_stage["next_stage_id"]
-        return state
+    current_stage["messages"].append(SystemMessage(content=state["basic_instruction"] + " \n " + current_stage["prompt"]))
+    response = llm.invoke(current_stage["messages"])
+    print(f"\n👤 AI: {response.content}")
+    current_stage["messages"].append(response)
+    current_stage["phase"] = TicketProcessorPhase.IN_PROGRESS
+    return state
 
-    # print(f"\n👤 Node: {current_stage['node']}, Phase: {current_stage['phase']}")
-    if current_stage["phase"] == TicketProcessorPhase.NOT_STARTED:
-        current_stage["messages"].append(SystemMessage(content=state["basic_instruction"] + " \n " + current_stage["prompt"]))
-        response = llm.invoke(current_stage["messages"])
-        print(f"\n👤 AI: {response.content}")
-        current_stage["messages"].append(response)
-        current_stage["phase"] = TicketProcessorPhase.IN_PROGRESS
-        return state
-    
-    if is_last_message_tool_call(current_stage["messages"]):
-        breakpoint()
-        response = llm.invoke(current_stage["messages"])
-        print(f"\n👤 AI: {response.content}")
-        current_stage["messages"].append(response)
-        return state
-
-
-    user_input = input(f"\n👤 User: ")
-    user_message = HumanMessage(content=user_input)
-    current_stage["messages"].append(user_message)
+def invoke_llm_call(state: ScrumAgentTicketProcessorState):
+    current_stage_id = state["current_stage"]
+    # if current_stage_id == 2:
+    #     breakpoint()
+    current_stage = state["stages"][current_stage_id]
 
     response = llm.invoke(current_stage["messages"])
-    # if state["current_stage"] == 2:
-    #     breakpoint()
     print(f"\n👤 AI: {response.content}")
+    current_stage["messages"].append(response)
 
-    # Check for tool call
     if hasattr(response, "tool_calls") and response.tool_calls:
         # breakpoint()
-        current_stage["messages"].append(response)
         current_stage["phase"] = TicketProcessorPhase.TOOLS_CALL
         return state
-
+    
     try:
         systemCommand = deserialize_system_command(response.content)
-        # breakpoint()
-        # if state["current_stage"] == 2:
-        #     breakpoint()
         if systemCommand["command"] == "proceed_to_next_stage":
             current_stage["phase"] = TicketProcessorPhase.PROCEED_TO_NEXT_STAGE
             if "args" in systemCommand and "next_stage_id" in systemCommand["args"]:
@@ -74,31 +53,42 @@ def execute_stage(state: ScrumAgentTicketProcessorState):
         
     except (json.JSONDecodeError, TypeError):
         pass
-    current_stage["messages"].append(user_message)
+
     return state
+
+def execute_stage(state: ScrumAgentTicketProcessorState):
+    # breakpoint()
+    current_stage_id = state["current_stage"]
+    # if current_stage_id == 2:
+    #     breakpoint()
+    current_stage = state["stages"][current_stage_id]
+
+    if current_stage["phase"] == TicketProcessorPhase.PROCEED_TO_NEXT_STAGE:
+        state["current_stage"] = current_stage["next_stage_id"]
+        return state
+
+    # print(f"\n👤 Node: {current_stage['node']}, Phase: {current_stage['phase']}")
+    if current_stage["phase"] == TicketProcessorPhase.NOT_STARTED:
+        return handler_not_started_phase(state)
+    
+    if is_last_message_tool_call(current_stage["messages"]):
+        # breakpoint()
+        return invoke_llm_call(state)
+
+    user_input = input(f"\n👤 User: ")
+    user_message = HumanMessage(content=user_input)
+    current_stage["messages"].append(user_message)
+
+    return invoke_llm_call(state)
+
+# def summarize_converstaion(state: ScrumAgentTicketProcessorState):
+
 
 def stage_flow_decision(state):
     current_stage_id = state["current_stage"]
     current_stage = state["stages"][current_stage_id]
-    # print(f"In stage_flow_decision. Node: {current_stage['node']}, Phase: {current_stage['phase']}")
-    # if current_stage["phase"] == TicketProcessorPhase.NOT_STARTED or current_stage["phase"] == TicketProcessorPhase.IN_PROGRESS:
-    #     return current_stage["phase"]
     
     return current_stage["phase"]
-
-
-# def my_stage_flow_decision_v2(state):
-#     # breakpoint()
-#     current_stage_id = state["current_stage"]
-#     current_stage = state["stages"][current_stage_id]
-#     print(f"In my_stage_flow_decision_v2. Node: {current_stage['node']}, Phase: {current_stage['phase']}")
-#     if current_stage["phase"] == "in_progress" or current_stage["phase"] == "not_started":
-#         return current_stage["node"]
-    
-#     if current_stage["phase"] == TicketProcessorPhase.TOOLS_CALL:
-#         breakpoint()
-#         return TicketProcessorPhase.TOOLS_CALL
-#     return current_stage["phase"]
 
 def custom_tool_node(state):
     # breakpoint()
@@ -236,8 +226,10 @@ initial_state = {
         }}
     """,
     "current_stage": 0,
+    "processed_stages": [],
     "stages": [
         {
+            "id": 0,
             "node": "basic_info",
             "prompt": """
                 Ask for the user whether they need any information about the ticket. Use the tools available to you to assist the user. For every response from AI, ask the user if they have any other questions.
@@ -254,6 +246,7 @@ initial_state = {
             "messages": []
         },
         {
+            "id": 1,
             # Only when the the user shares their plan, ask for confirmation that the plan is correct. Do not ask for confirmation if the user does not share any plan.
             "node": "plan_for_the_day",
             "prompt": """
@@ -272,24 +265,25 @@ initial_state = {
             "next_stage_id": -1,
             "messages": []
         },
+        # {
+        #     "node": "update_ticket_status",
+        #     "prompt": """
+        #         Ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
+        #         If the user agrees, you MUST use the 'update_status' tool to update the ticket status.
+        #         After the tool call, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+        #         {{
+        #             "command": "proceed_to_next_stage",
+        #             "args": {{
+        #                 "next_stage_id": 3
+        #             }}
+        #         }}
+        #         """,
+        #     "phase": TicketProcessorPhase.NOT_STARTED,
+        #     "next_stage_id": -1,
+        #     "messages": []
+        # },
         {
-            "node": "update_ticket_status",
-            "prompt": """
-                Ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
-                If the user agrees, you MUST use the 'update_status' tool to update the ticket status.
-                After the tool call, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-                {{
-                    "command": "proceed_to_next_stage",
-                    "args": {{
-                        "next_stage_id": 3
-                    }}
-                }}
-                """,
-            "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": -1,
-            "messages": []
-        },
-        {
+            "id": 2,
             "node": "blocker_check",
             "prompt": """
             Ask the user if they foresee any challenges or blockers in proceeding with the ticket.
@@ -301,7 +295,41 @@ initial_state = {
             Ask the user if they want to add a comment to the ticket about the blockers.
                 - If the user agrees, use the 'add_comment' tool to add the comment.
 
-            After handling blockers and comments, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+            If the user does not mention any blockers and if the status of the ticket is 'To Do', you can skip this step.
+                - Ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
+                - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'In Progress'.
+
+            After performing the above steps, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
+            {
+                "command": "proceed_to_next_stage",
+                "args": {
+                    "next_stage_id": 3
+                }
+            }
+            """,
+            # "instruction": "Can we update the status of the ticket to 'In Progress'?",
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": -1,
+            "messages": []
+        },
+        {
+            "id": 3,
+            "node": "summarize_conversation",
+            "prompt": """
+            Ask the user if they foresee any challenges or blockers in proceeding with the ticket.
+
+            If the user mentions any blockers:
+            - Ask if you should update the ticket status to 'Blocked'.
+                - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'Blocked'.
+
+            Ask the user if they want to add a comment to the ticket about the blockers.
+                - If the user agrees, use the 'add_comment' tool to add the comment.
+
+            If the user does not mention any blockers and if the status of the ticket is 'To Do', you can skip this step.
+                - Ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
+                - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'In Progress'.
+
+            After performing the above steps, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
             {
                 "command": "proceed_to_next_stage",
                 "args": {
