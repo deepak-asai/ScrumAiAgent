@@ -10,8 +10,8 @@ from models import (
     TicketProcessingBotPhase,
     TicketProcessorAgentState,
 )
-from main_bot import main_bot
-from ticket_processing_bot import ticket_processing_bot
+from main_bot_old import main_bot
+from ticket_processing_bot_old import ticket_processing_bot
 
 load_dotenv()
 prev_message = ""

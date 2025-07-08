@@ -26,43 +26,6 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
         else "This is a new conversation. Start by greeting the user and helping them choose a ticket. Give a small introduction about the bot and its purpose."
     )
 
-    # prompt = f"""
-    # You are an agent to conduct a scrum meeting. 
-    # {conversation_note}
-    # You have to sound like the manager of the user. You have a list of tickets. All these tickets are assigned to the user. These tickets will have ids, summary and description, priority and status. You should ask the user to choose a ticket to start discussing on. The user will reply with the ticket id or name. The user might need to know about any ticket's description. You should help with it. Show the list of tickets in the a format that is easy to read:
-    #     Ticket ID: <id>
-    #     Summary: <summary>
-    #     Status: <status>
-    #     Priority: <priority>
-    #     Start Date: <start_date>
-    #     Due Date: <due_date>
-        
-    # Tickets:
-    # {tickets_str}
-
-    # The order of the tickets should be as follows:
-    # 1. Tickets with status "In Progress"
-    # 2. Tickets with status "To Do"
-
-    # If the user selects a ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-
-    # {{
-    #     "command": "ticket_chosen",
-    #     "args": {{
-    #         "ticket_id": "<ticket_id>"
-    #     }},
-    # }}
-
-    # Replace <ticket_id> with the actual ticket id selected by the user.
-
-    # If the user has not selected a ticket, continue the conversation as usual.
-
-    # If the user does not choose any ticket or if the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-    # {{
-    #     "command": "end_conversation"
-    # }}
-    # """
-
     restarted_bot_prompt = f"""
     - Previous ticket discussion is complete. This is a continuation of the scrum meeting.
     - Ask the user which ticket they want to discuss next, or if they want to end the conversation.

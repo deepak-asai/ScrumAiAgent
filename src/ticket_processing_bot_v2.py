@@ -1,22 +1,29 @@
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from models import ScrumAgentTicketProcessorState, TicketProcessorPhase
+from models import ScrumAgentTicketProcessorState, TicketProcessorPhase, MainBotPhase
 from tools import current_date, fetch_comments, add_comment, update_status, update_ticket_dates
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from helpers import deserialize_system_command
 from tools import current_date
 from langchain_core.messages import ToolMessage
+from jira_service import JiraService, Ticket
+from langchain_core.prompts import PromptTemplate
+from prompts import ticket_processor_stage_prompt, ticket_processor_base_prompt
 import json
 
 tools = [current_date, fetch_comments, add_comment, update_status, update_ticket_dates]
 llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.5).bind_tools(tools)
 
-def handler_not_started_phase(state: ScrumAgentTicketProcessorState):
-    current_stage_id = state["current_stage"]
-    current_stage = state["stages"][current_stage_id]
+    
 
-    current_stage["messages"].append(SystemMessage(content=state["basic_instruction"] + " \n " + current_stage["prompt"]))
+def handler_not_started_phase(state: ScrumAgentTicketProcessorState):
+    current_stage_id = state["ticket_processing_current_stage"]
+    current_stage = state["ticket_processing_stages"][current_stage_id]
+
+    ticket_processor_prompt = ticket_processor_base_prompt(state)
+    current_stage_prompt = ticket_processor_stage_prompt(state, current_stage["node"])
+    current_stage["messages"].append(SystemMessage(content=ticket_processor_prompt + " \n " + current_stage_prompt))
     response = llm.invoke(current_stage["messages"])
     print(f"\n👤 AI: {response.content}")
     current_stage["messages"].append(response)
@@ -24,11 +31,11 @@ def handler_not_started_phase(state: ScrumAgentTicketProcessorState):
     return state
 
 def invoke_llm_call(state: ScrumAgentTicketProcessorState):
-    current_stage_id = state["current_stage"]
-    # if current_stage_id == 2:
-    #     breakpoint()
-    current_stage = state["stages"][current_stage_id]
+    current_stage_id = state["ticket_processing_current_stage"]
+    current_stage = state["ticket_processing_stages"][current_stage_id]
 
+    # if current_stage_id == 4:
+    #     breakpoint()
     response = llm.invoke(current_stage["messages"])
     print(f"\n👤 AI: {response.content}")
     current_stage["messages"].append(response)
@@ -56,15 +63,152 @@ def invoke_llm_call(state: ScrumAgentTicketProcessorState):
 
     return state
 
-def execute_stage(state: ScrumAgentTicketProcessorState):
-    # breakpoint()
-    current_stage_id = state["current_stage"]
-    # if current_stage_id == 2:
-    #     breakpoint()
-    current_stage = state["stages"][current_stage_id]
+# def generate_summary(state: ScrumAgentTicketProcessorState):
+#     current_stage_id = state["ticket_processing_current_stage"]
+#     current_stage = state["ticket_processing_stages"][current_stage_id]
+    
 
+#     current_stage["summary"] = summary
+#     print(f"\nSummary of the conversation:\n{summary}")
+    
+#     return state
+
+def fetch_jira_tickets(user_id) -> list[Ticket]:
+    """Fetch Jira tickets for a given user using Jira REST API."""
+    service = JiraService.get_instance()
+    return service.fetch_user_tickets(user_id, "APP")
+
+
+def main_bot(agent_state: ScrumAgentTicketProcessorState):
+    # breakpoint()  # For debugging purposes, remove in production
+    tickets = fetch_jira_tickets("deepak.a.1996@gmail.com")
+    tickets_str = json.dumps(tickets, indent=2)
+
+    conversation_note = (
+        """
+        This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "
+        """
+        if agent_state['main_bot_phase'] == MainBotPhase.RESTARTED
+        else "This is a new conversation. Start by greeting the user and helping them choose a ticket. Give a small introduction about the bot and its purpose."
+    )
+
+    restarted_bot_prompt = f"""
+    - Previous ticket discussion is complete. This is a continuation of the scrum meeting.
+    - Ask the user which ticket they want to discuss next, or if they want to end the conversation.
+    - Recently processed tickets: {agent_state["recently_processed_ticket_ids"] or []}
+        (Show these at the end of the list. Do not mention them explicitly.)
+    - If the user selects a recently discussed ticket, confirm if they want to continue with it or choose a different ticket.
+    """
+
+    prompt = f"""
+    You are an agent conducting a scrum meeting. Speak as the user's manager. {conversation_note}
+
+    Context:
+    - You have a list of tickets assigned to the user.
+    - Each ticket has: Ticket ID, Summary, Status, Priority, Start Date, Due Date.
+
+    Follow all these instructions strictly. Do not skip any of them:
+    - Show the list of tickets in this format:
+        Ticket ID: <id>
+        Summary: <summary>
+        Status: <status>
+        Priority: <priority>
+        Start Date: <start_date>
+        Due Date: <due_date>
+    - Order the tickets as follows:
+        1. Tickets with status "In Progress"
+        2. Tickets with status "To Do"
+        3. Recently processed tickets (show these last; do not mention them explicitly to the user)
+    - {restarted_bot_prompt}
+    - Ask the user to choose a ticket to discuss, or if they want to end the conversation.
+    - If the user requests a ticket's description, provide it.
+    - If the user selects a ticket, respond ONLY with this JSON (no extra text):
+        {{
+            "command": "ticket_chosen",
+            "args": {{
+                "ticket_id": "<ticket_id>"
+            }}
+        }}
+        (Replace <ticket_id> with the actual ticket id.)
+    - If the user does not select a ticket, continue the conversation.
+    - If the user wants to end the conversation, respond ONLY with:
+        {{
+            "command": "end_conversation"
+        }}
+
+    Tickets:
+    {tickets_str}
+    """
+
+    # breakpoint()  # For debugging purposes, remove in production
+    if agent_state["main_bot_phase"] == MainBotPhase.RESTARTED:
+        agent_state["main_bot_messages"] = []
+
+    if agent_state["main_bot_phase"] == MainBotPhase.NOT_STARTED or MainBotPhase.RESTARTED:
+        agent_state["main_bot_messages"].append(SystemMessage(content=prompt))
+    
+    if agent_state["main_bot_phase"] in [MainBotPhase.NOT_STARTED, MainBotPhase.RESTARTED]:
+        response = llm.invoke(agent_state["main_bot_messages"])
+        print(f"\n👤 AI: {response.content}")
+        return {
+            "main_bot_phase": MainBotPhase.IN_PROGRESS,
+            "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
+            "main_bot_messages": list(agent_state["main_bot_messages"]) + [response]
+        }
+
+    user_input = input("\n👤 User: ")
+    agent_state["main_bot_messages"].append(HumanMessage(content=user_input))
+
+    response = llm.invoke(agent_state["main_bot_messages"])
+    print(f"\n👤 AI: {response.content}")
+    try:
+        systemCommand = deserialize_system_command(response.content)
+        if systemCommand["command"] == "ticket_chosen" and "ticket_id" in systemCommand["args"]:
+            return {
+                "main_bot_phase": MainBotPhase.TICKET_CHOSEN,
+                "current_ticket": next((t for t in tickets if t["id"] == systemCommand["args"]["ticket_id"]), None),
+                "main_bot_messages": list(agent_state["main_bot_messages"]),
+                "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
+                "ticket_processing_messages": [response]
+            }
+        
+        if systemCommand["command"] == "end_conversation":
+            return {
+                "main_bot_phase": MainBotPhase.END_CONVERSATION,
+            }
+        
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return {
+        "main_bot_phase": MainBotPhase.IN_PROGRESS,
+        "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
+        "main_bot_messages": list(agent_state["main_bot_messages"]) + [response]
+    }
+
+def main_bot_flow_decision(state: ScrumAgentTicketProcessorState):
+    # breakpoint()  # For debugging purposes, remove in production
+    if "bot_state" in state and state["bot_state"] == MainBotPhase.COMPLETED:
+        return "end_conversation"
+
+    messages = state["main_bot_messages"]
+
+    if not messages:
+        return "continue"
+
+    if "main_bot_phase" in state and state["main_bot_phase"] == MainBotPhase.TICKET_CHOSEN:
+        return "ticket_processing_bot"
+   
+    return "continue"
+
+def execute_stage(state: ScrumAgentTicketProcessorState):
+    current_stage_id = state["ticket_processing_current_stage"]
+    current_stage = state["ticket_processing_stages"][current_stage_id]
+
+    # if current_stage_id == 3 or current_stage_id == 4:
+    #     breakpoint()
     if current_stage["phase"] == TicketProcessorPhase.PROCEED_TO_NEXT_STAGE:
-        state["current_stage"] = current_stage["next_stage_id"]
+        state["ticket_processing_current_stage"] = current_stage["next_stage_id"]
         return state
 
     # print(f"\n👤 Node: {current_stage['node']}, Phase: {current_stage['phase']}")
@@ -75,25 +219,46 @@ def execute_stage(state: ScrumAgentTicketProcessorState):
         # breakpoint()
         return invoke_llm_call(state)
 
-    user_input = input(f"\n👤 User: ")
+    user_input = input(f"\n👤 User from execute: ")
     user_message = HumanMessage(content=user_input)
     current_stage["messages"].append(user_message)
 
     return invoke_llm_call(state)
 
-# def summarize_converstaion(state: ScrumAgentTicketProcessorState):
+def summarize_conversation_node(state: ScrumAgentTicketProcessorState):
+        # Collect all messages from all stages
+        # breakpoint()  # For debugging purposes, remove in production
+        summary_prompt = ticket_processor_stage_prompt(state, "summarize_conversation")
+        # Use the LLM to generate the summary
+        response = llm.invoke([SystemMessage(content=summary_prompt)])
+        summary = response.content.strip()
 
+        state["ticket_processing_current_stage"] = 3
+        current_stage = state["ticket_processing_stages"][3]
+        # Store or print the summary
+        current_stage["summary"] = summary
+        current_stage["phase"] = TicketProcessorPhase.PROCEED_TO_NEXT_STAGE
+        current_stage["next_stage_id"] = 4
+        # print(f"\nSummary of the conversation:\n{summary}")
+
+        return state
+def ticket_processing_end_node(state: ScrumAgentTicketProcessorState):
+    state["main_bot_phase"] = MainBotPhase.RESTARTED
+    state["ticket_processing_current_stage"] = 0
+
+    return state
 
 def stage_flow_decision(state):
-    current_stage_id = state["current_stage"]
-    current_stage = state["stages"][current_stage_id]
-    
+    current_stage_id = state["ticket_processing_current_stage"]
+    current_stage = state["ticket_processing_stages"][current_stage_id]
+    # if current_stage_id == 2:
+    #     breakpoint()  # For debugging purposes, remove in production
     return current_stage["phase"]
 
 def custom_tool_node(state):
     # breakpoint()
-    current_stage_id = state["current_stage"]
-    current_stage = state["stages"][current_stage_id]
+    current_stage_id = state["ticket_processing_current_stage"]
+    current_stage = state["ticket_processing_stages"][current_stage_id]
     # Get messages for this stage
     messages = current_stage["messages"]
     
@@ -125,13 +290,18 @@ def custom_tool_node(state):
 def is_last_message_tool_call(messages) -> bool:
     return isinstance(messages[-1], ToolMessage)
 
+
+
 graph = StateGraph(ScrumAgentTicketProcessorState)
-graph.add_node("update_ticket_status_custom_tool_node", custom_tool_node)
 graph.add_node("blocker_check_custom_tool_node", custom_tool_node)
+graph.add_node("confirm_summary_custom_tool_node", custom_tool_node)
+
 graph.add_node("basic_info", execute_stage)
 graph.add_node("plan_for_the_day", execute_stage)
-graph.add_node("update_ticket_status", execute_stage)
 graph.add_node("blocker_check", execute_stage)
+graph.add_node("summarize_conversation", summarize_conversation_node)
+graph.add_node("confirm_summary", execute_stage)
+graph.add_node("ticket_processing_end_node", ticket_processing_end_node)
 
 graph.set_entry_point("basic_info")
 graph.add_conditional_edges(
@@ -153,21 +323,8 @@ graph.add_conditional_edges(
     {
         TicketProcessorPhase.NOT_STARTED: "plan_for_the_day",
         TicketProcessorPhase.IN_PROGRESS: "plan_for_the_day",
-        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "update_ticket_status",
-        # TicketProcessorPhase.TOOLS_CALL: END,  # This will call the tool node
-        TicketProcessorPhase.END_CONVERSATION: END,  # This will end the conversation
-        TicketProcessorPhase.COMPLETED: END,  # This will end the conversation
-    }
-)
-
-graph.add_conditional_edges(
-    "update_ticket_status",
-    stage_flow_decision,
-    {
-        TicketProcessorPhase.NOT_STARTED: "update_ticket_status",
-        TicketProcessorPhase.IN_PROGRESS: "update_ticket_status",
         TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "blocker_check",
-        TicketProcessorPhase.TOOLS_CALL: "update_ticket_status_custom_tool_node",  # This will call the tool node
+        # TicketProcessorPhase.TOOLS_CALL: END,  # This will call the tool node
         TicketProcessorPhase.END_CONVERSATION: END,  # This will end the conversation
         TicketProcessorPhase.COMPLETED: END,  # This will end the conversation
     }
@@ -179,135 +336,75 @@ graph.add_conditional_edges(
     {
         TicketProcessorPhase.NOT_STARTED: "blocker_check",
         TicketProcessorPhase.IN_PROGRESS: "blocker_check",
-        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: END,
+        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "summarize_conversation",
         TicketProcessorPhase.TOOLS_CALL: "blocker_check_custom_tool_node",  # This will call the tool node
-        TicketProcessorPhase.END_CONVERSATION: END,  # This will end the conversation
-        TicketProcessorPhase.COMPLETED: END,  # This will end the conversation
+        TicketProcessorPhase.END_CONVERSATION: "ticket_processing_end_node",  # This will end the conversation
+        TicketProcessorPhase.COMPLETED: "ticket_processing_end_node",  # This will end the conversation
     }
 )
+graph.add_edge("summarize_conversation", "confirm_summary")
+graph.add_conditional_edges(
+    "confirm_summary",
+    stage_flow_decision,
+    {
+        TicketProcessorPhase.NOT_STARTED: "confirm_summary",
+        TicketProcessorPhase.IN_PROGRESS: "confirm_summary",
+        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "ticket_processing_end_node",
+        TicketProcessorPhase.TOOLS_CALL: "confirm_summary_custom_tool_node",  # This will call the tool node
+        TicketProcessorPhase.END_CONVERSATION: "ticket_processing_end_node",  # This will end the conversation
+        TicketProcessorPhase.COMPLETED: "ticket_processing_end_node",  # This will end the conversation
+    }
+)
+graph.add_edge("ticket_processing_end_node", END)
 # graph.add_edge("custom_tool_node", "basic_info")
 # graph.add_edge("custom_tool_node", "plan_for_the_day")
-graph.add_edge("update_ticket_status_custom_tool_node", "update_ticket_status")
 graph.add_edge("blocker_check_custom_tool_node", "blocker_check")
-
-app = graph.compile()
-
-# try:
-#     from IPython.display import Image, display
-#     app.get_graph().draw_png("graph.png")
-# except Exception as e:
-#     breakpoint()
-#     print("Could not display image. Ensure pygraphviz is installed.")
+graph.add_edge("confirm_summary_custom_tool_node", "confirm_summary")
+subgraph_app = graph.compile()
 
 
-ticket = {
-    "id": "APP-1",
-    "title": "Fix login bug",
-    "description": "User is unable to login with correct credentials.",
-    "status": "To Do",
-    "priority": "High"
-}
+
+main_graph = StateGraph(ScrumAgentTicketProcessorState)
+main_graph.add_node("main_bot", main_bot)
+main_graph.add_node("ticket_processing_bot", subgraph_app)  # graph is your subgraph, not subgraph_app
+
+main_graph.set_entry_point("main_bot")
+main_graph.add_conditional_edges(
+    "main_bot",
+    main_bot_flow_decision,
+    {
+        "continue": "main_bot",
+        "ticket_processing_bot": "ticket_processing_bot",
+        "end_conversation": END,  # This will end the conversation
+    }
+)
+main_graph.add_edge("ticket_processing_bot", "main_bot")
+
+main_graph_app = main_graph.compile()
 
 initial_state = {
-    "basic_instruction": 
-    f"""
-    You are an agent to conduct a scrum meeting. You have to sound like the user's manager. Do not start with any greeting or introduction. The user has chosen to work on this ticket: APP-1
-        - {ticket}
-
-    Instructions:
-        - If the user wants to update the ticket status, use the following transition IDs: "To Do": "11", "In Progress": "21", "Done": "31", "Blocked": "2"
-        - If the user is done with this ticket or if the user says he is wants to work on someother ticket, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-        {{
-            "command": "ticket_processing_done"
-        }}
-        - If the users chooses to end the conversation, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-        {{
-            "command": "end_conversation"
-        }}
-    """,
-    "current_stage": 0,
-    "processed_stages": [],
-    "stages": [
+    "main_bot_phase": MainBotPhase.NOT_STARTED,
+    "recently_processed_ticket_ids": [],
+    "main_bot_messages": [],
+    "ticket_processing_current_stage": 0,
+    "ticket_processing_stages": [
         {
             "id": 0,
             "node": "basic_info",
-            "prompt": """
-                Ask for the user whether they need any information about the ticket. Use the tools available to you to assist the user. For every response from AI, ask the user if they have any other questions.
-                Once the user is not having any questions, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-                {{
-                    "command": "proceed_to_next_stage",
-                    "args": {{
-                        "next_stage_id": 1
-                    }}
-                }}
-                """,
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": -1,
             "messages": []
         },
         {
             "id": 1,
-            # Only when the the user shares their plan, ask for confirmation that the plan is correct. Do not ask for confirmation if the user does not share any plan.
             "node": "plan_for_the_day",
-            "prompt": """
-                Ask the user what their plan is for the day regarding this ticket. 
-                Do not provide any context or information about the ticket unless the user specifically asks for it.
-                No need to use the any tools unless the user asks specifically asks for something.
-                Once the user gives the plan, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-                {{
-                    "command": "proceed_to_next_stage",
-                    "args": {{
-                        "next_stage_id": 2
-                    }}
-                }}
-                """,
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": -1,
             "messages": []
         },
-        # {
-        #     "node": "update_ticket_status",
-        #     "prompt": """
-        #         Ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
-        #         If the user agrees, you MUST use the 'update_status' tool to update the ticket status.
-        #         After the tool call, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-        #         {{
-        #             "command": "proceed_to_next_stage",
-        #             "args": {{
-        #                 "next_stage_id": 3
-        #             }}
-        #         }}
-        #         """,
-        #     "phase": TicketProcessorPhase.NOT_STARTED,
-        #     "next_stage_id": -1,
-        #     "messages": []
-        # },
         {
             "id": 2,
             "node": "blocker_check",
-            "prompt": """
-            Ask the user if they foresee any challenges or blockers in proceeding with the ticket.
-
-            If the user mentions any blockers:
-            - Ask if you should update the ticket status to 'Blocked'.
-                - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'Blocked'.
-
-            Ask the user if they want to add a comment to the ticket about the blockers.
-                - If the user agrees, use the 'add_comment' tool to add the comment.
-
-            If the user does not mention any blockers and if the status of the ticket is 'To Do', you can skip this step.
-                - Ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
-                - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'In Progress'.
-
-            After performing the above steps, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-            {
-                "command": "proceed_to_next_stage",
-                "args": {
-                    "next_stage_id": 3
-                }
-            }
-            """,
-            # "instruction": "Can we update the status of the ticket to 'In Progress'?",
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": -1,
             "messages": []
@@ -315,36 +412,21 @@ initial_state = {
         {
             "id": 3,
             "node": "summarize_conversation",
-            "prompt": """
-            Ask the user if they foresee any challenges or blockers in proceeding with the ticket.
-
-            If the user mentions any blockers:
-            - Ask if you should update the ticket status to 'Blocked'.
-                - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'Blocked'.
-
-            Ask the user if they want to add a comment to the ticket about the blockers.
-                - If the user agrees, use the 'add_comment' tool to add the comment.
-
-            If the user does not mention any blockers and if the status of the ticket is 'To Do', you can skip this step.
-                - Ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
-                - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'In Progress'.
-
-            After performing the above steps, respond ONLY with the following JSON format and do not include any other text, explanation, or greeting:
-            {
-                "command": "proceed_to_next_stage",
-                "args": {
-                    "next_stage_id": 3
-                }
-            }
-            """,
-            # "instruction": "Can we update the status of the ticket to 'In Progress'?",
+            "summary": "",
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": -1,
             "messages": []
+        },
+        {
+            "id": 4,
+            "node": "confirm_summary",
+            "messages": [],
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": -1
         }
     ]
 }
 
-app.invoke(initial_state)
+main_graph_app.invoke(initial_state)
 # for step in app.stream(initial_state, stream_mode="values"):
 #     pass  # The logic in your nodes will handle printing and user interaction

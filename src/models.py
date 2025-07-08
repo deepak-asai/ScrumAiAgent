@@ -51,6 +51,9 @@ class TicketProcessorStage(TypedDict):
     messages: Annotated[Sequence, add_messages]
 
 class ScrumAgentTicketProcessorState(TypedDict):
-    basic_instruction: str
-    current_stage: int
-    stages: List[TicketProcessorStage]
+    main_bot_phase: MainBotPhase
+    recently_processed_ticket_ids: NotRequired[List[str]]
+    current_ticket: Ticket
+    main_bot_messages: Annotated[Sequence, add_messages]
+    ticket_processing_current_stage: int
+    ticket_processing_stages: List[TicketProcessorStage]
