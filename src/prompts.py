@@ -101,7 +101,7 @@ def summarize_conversation_prompt(state: ScrumAgentTicketProcessorState) -> str:
 
 def confirm_summary_prompt(state: ScrumAgentTicketProcessorState) -> str:
     return f"""
-    Ask the user to confirm the summary of the conversation. Or else ask the user what else to add to this summary.
+    Ask the user to confirm the summary of the conversation. Or else ask the user what else to add to this summary. Tell them that you will add this summary as comments in the ticket. 
     Summary: {state["ticket_processing_stages"][3]["summary"]}
     If the user confirms, you MUST use the tool `add_comment` to add the summary to the ticket.
     If the user does not confirm, ask the user what else to add to the summary.
