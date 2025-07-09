@@ -35,7 +35,7 @@ def basic_info_prompt(state: ScrumAgentTicketProcessorState) ->str:
     {{
         "command": "proceed_to_next_stage",
         "args": {{
-            "next_stage_id": 1
+            "next_stage_id": "plan_for_the_day"
         }}
     }}
     """
@@ -49,7 +49,7 @@ def plan_for_the_day_prompt(state: ScrumAgentTicketProcessorState) -> str:
     {{
         "command": "proceed_to_next_stage",
         "args": {{
-            "next_stage_id": 2
+            "next_stage_id": "blocker_check"
         }}
     }}
     """
@@ -76,15 +76,17 @@ def blocker_check_prompt(state: ScrumAgentTicketProcessorState) -> str:
     {{
         "command": "proceed_to_next_stage",
         "args": {{
-            "next_stage_id": 3
+            "next_stage_id": "summarize_conversation"
         }}
     }}
     """
 
 def summarize_conversation_prompt(state: ScrumAgentTicketProcessorState) -> str:
     all_messages = []
-    for stage in state["ticket_processing_stages"]:
-        for msg in stage.get("messages", []):
+    stages_to_pick_for_summary = ["basic_info", "plan_for_the_day", "blocker_check"]
+
+    for stage in stages_to_pick_for_summary:
+        for msg in state["ticket_processing_stages"][stage].get("messages", []):
             if isinstance(msg, (AIMessage, HumanMessage)):
                 role = "AI" if isinstance(msg, AIMessage) else "User"
                 all_messages.append(f"{role}: {msg.content.strip()}")
@@ -102,7 +104,7 @@ def summarize_conversation_prompt(state: ScrumAgentTicketProcessorState) -> str:
 def confirm_summary_prompt(state: ScrumAgentTicketProcessorState) -> str:
     return f"""
     Ask the user to confirm the summary of the conversation. Or else ask the user what else to add to this summary. Tell them that you will add this summary as comments in the ticket. 
-    Summary: {state["ticket_processing_stages"][3]["summary"]}
+    Summary: {state["ticket_processing_stages"]["summarize_conversation"]["summary"]}
     If the user confirms, you MUST use the tool `add_comment` to add the summary to the ticket.
     If the user does not confirm, ask the user what else to add to the summary.
     After performing the above steps, respond ONLY with this JSON (do not include any other text, explanation, or formatting):

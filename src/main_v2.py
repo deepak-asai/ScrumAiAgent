@@ -137,30 +137,30 @@ initial_state = {
     "main_bot_phase": MainBotPhase.NOT_STARTED,
     "recently_processed_ticket_ids": [],
     "main_bot_messages": [],
-    "ticket_processing_current_stage": 0,
-    "ticket_processing_stages": [
-        {
+    "ticket_processing_current_stage": "basic_info",
+    "ticket_processing_stages": {
+        "basic_info": {
             "id": 0,
             "node": "basic_info",
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": -1,
             "messages": []
         },
-        {
+        "plan_for_the_day": {
             "id": 1,
             "node": "plan_for_the_day",
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": -1,
             "messages": []
         },
-        {
+        "blocker_check": {
             "id": 2,
             "node": "blocker_check",
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": -1,
             "messages": []
         },
-        {
+        "summarize_conversation": {
             "id": 3,
             "node": "summarize_conversation",
             "summary": "",
@@ -168,14 +168,14 @@ initial_state = {
             "next_stage_id": -1,
             "messages": []
         },
-        {
+        "confirm_summary": {
             "id": 4,
             "node": "confirm_summary",
             "messages": [],
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": -1
         }
-    ]
+    }
 }
 
 main_graph_app.invoke(initial_state)

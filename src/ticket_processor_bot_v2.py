@@ -45,7 +45,7 @@ def invoke_llm_call(state: ScrumAgentTicketProcessorState, llm=None):
         if systemCommand["command"] == "proceed_to_next_stage":
             current_stage["phase"] = TicketProcessorPhase.PROCEED_TO_NEXT_STAGE
             if "args" in systemCommand and "next_stage_id" in systemCommand["args"]:
-                current_stage["next_stage_id"] = systemCommand["args"].get("next_stage_id", -1)
+                current_stage["next_stage_id"] = systemCommand["args"].get("next_stage_id", "basic_info")
             return state
         
         if systemCommand["command"] == "end_conversation":
@@ -92,19 +92,19 @@ def summarize_conversation_node(state: ScrumAgentTicketProcessorState, llm=None)
         response = llm.invoke([SystemMessage(content=summary_prompt)])
         summary = response.content.strip()
 
-        state["ticket_processing_current_stage"] = 3
-        current_stage = state["ticket_processing_stages"][3]
+        state["ticket_processing_current_stage"] = "summarize_conversation"
+        current_stage = state["ticket_processing_stages"]["summarize_conversation"]
         # Store or print the summary
         current_stage["summary"] = summary
         current_stage["phase"] = TicketProcessorPhase.PROCEED_TO_NEXT_STAGE
-        current_stage["next_stage_id"] = 4
+        current_stage["next_stage_id"] = "confirm_summary"
         # print(f"\nSummary of the conversation:\n{summary}")
 
         return state
 
 def ticket_processing_end_node(state: ScrumAgentTicketProcessorState):
     state["main_bot_phase"] = MainBotPhase.RESTARTED
-    state["ticket_processing_current_stage"] = 0
+    state["ticket_processing_current_stage"] = "basic_info"
     state["recently_processed_ticket_ids"].append(state["current_ticket"]["id"])
 
     return state
