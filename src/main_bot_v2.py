@@ -74,10 +74,6 @@ def main_bot(agent_state: ScrumAgentTicketProcessorState, llm=None):
     """
 
     # breakpoint()
-    if agent_state["main_bot_phase"] == MainBotPhase.RESTARTED:
-        agent_state["main_bot_messages"] = []
-
-    
     if agent_state["main_bot_phase"] in [MainBotPhase.NOT_STARTED, MainBotPhase.RESTARTED]:
         agent_state["main_bot_messages"].append(SystemMessage(content=prompt))
         response = llm.invoke(agent_state["main_bot_messages"])

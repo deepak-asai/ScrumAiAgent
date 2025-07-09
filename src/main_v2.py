@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from models import ScrumAgentTicketProcessorState, TicketProcessorPhase, MainBotPhase
+from models import ScrumAgentTicketProcessorState, TicketProcessorPhase, MainBotPhase, ticket_processor_initial_stages
 from tools import current_date, fetch_comments, add_comment, update_status, update_ticket_dates
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -153,45 +153,7 @@ initial_state = {
     "recently_processed_ticket_ids": [],
     "main_bot_messages": [],
     "ticket_processing_current_stage": "basic_info",
-    "ticket_processing_stages": {
-        "basic_info": {
-            "node": "basic_info",
-            "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": "",
-            "messages": []
-        },
-        "plan_for_the_day": {
-            "node": "plan_for_the_day",
-            "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": "",
-            "messages": []
-        },
-        "blocker_check": {
-            "node": "blocker_check",
-            "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": "",
-            "messages": []
-        },
-        "due_date_check": {
-            "node": "due_date_check",
-            "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": "",
-            "messages": []
-        },
-        "summarize_conversation": {
-            "node": "summarize_conversation",
-            "summary": "",
-            "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": "",
-            "messages": []
-        },
-        "confirm_summary": {
-            "node": "confirm_summary",
-            "messages": [],
-            "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": ""
-        }
-    }
+    "ticket_processing_stages": ticket_processor_initial_stages()
 }
 
 main_graph_app.invoke(initial_state)

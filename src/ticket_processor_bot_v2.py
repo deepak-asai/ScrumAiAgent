@@ -1,6 +1,6 @@
 import json
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
-from models import ScrumAgentTicketProcessorState, TicketProcessorPhase, MainBotPhase
+from models import ticket_processor_initial_stages, ScrumAgentTicketProcessorState, TicketProcessorPhase, MainBotPhase
 from prompts import ticket_processor_base_prompt, ticket_processor_stage_prompt
 from helpers import deserialize_system_command, is_json, print_ai_response
 from tools import (
@@ -102,10 +102,12 @@ def summarize_conversation_node(state: ScrumAgentTicketProcessorState, llm=None)
 
 def ticket_processing_end_node(state: ScrumAgentTicketProcessorState):
     # breakpoint()
+
     state["main_bot_phase"] = MainBotPhase.RESTARTED
-    # TODO: Reset with initial state
+    state["main_bot_messages"] = []
     state["ticket_processing_current_stage"] = "basic_info"
     state["recently_processed_ticket_ids"].append(state["current_ticket"]["id"])
+    state["ticket_processing_stages"] = ticket_processor_initial_stages()
 
     return state
 

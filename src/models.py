@@ -57,3 +57,44 @@ class ScrumAgentTicketProcessorState(TypedDict):
     main_bot_messages: Annotated[Sequence, add_messages]
     ticket_processing_current_stage: int
     ticket_processing_stages: List[TicketProcessorStage]
+
+def ticket_processor_initial_stages() -> ScrumAgentTicketProcessorState:
+    return {
+        "basic_info": {
+            "node": "basic_info",
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": "",
+            "messages": []
+        },
+        "plan_for_the_day": {
+            "node": "plan_for_the_day",
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": "",
+            "messages": []
+        },
+        "blocker_check": {
+            "node": "blocker_check",
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": "",
+            "messages": []
+        },
+        "due_date_check": {
+            "node": "due_date_check",
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": "",
+            "messages": []
+        },
+        "summarize_conversation": {
+            "node": "summarize_conversation",
+            "summary": "",
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": "",
+            "messages": []
+        },
+        "confirm_summary": {
+            "node": "confirm_summary",
+            "messages": [],
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": ""
+        }
+    }
