@@ -12,7 +12,6 @@ from tools import (
 )
 
 def handler_not_started_phase(state: ScrumAgentTicketProcessorState, llm=None):
-    # breakpoint()  # For debugging purposes, remove in production
     current_stage_id = state["ticket_processing_current_stage"]
     current_stage = state["ticket_processing_stages"][current_stage_id]
 
@@ -64,13 +63,10 @@ def execute_stage(state: ScrumAgentTicketProcessorState, llm=None):
     current_stage_id = state["ticket_processing_current_stage"]
     current_stage = state["ticket_processing_stages"][current_stage_id]
 
-    # if current_stage_id == 3 or current_stage_id == 4:
-    #     breakpoint()
     if current_stage["phase"] == TicketProcessorPhase.PROCEED_TO_NEXT_STAGE:
         state["ticket_processing_current_stage"] = current_stage["next_stage_id"]
         return state
 
-    # print(f"\n👤 Node: {current_stage['node']}, Phase: {current_stage['phase']}")
     if current_stage["phase"] == TicketProcessorPhase.NOT_STARTED:
         return handler_not_started_phase(state, llm)
     
@@ -94,11 +90,9 @@ def summarize_conversation_node(state: ScrumAgentTicketProcessorState, llm=None)
 
         state["ticket_processing_current_stage"] = "summarize_conversation"
         current_stage = state["ticket_processing_stages"]["summarize_conversation"]
-        # Store or print the summary
         current_stage["summary"] = summary
         current_stage["phase"] = TicketProcessorPhase.PROCEED_TO_NEXT_STAGE
         current_stage["next_stage_id"] = "confirm_summary"
-        # print(f"\nSummary of the conversation:\n{summary}")
 
         return state
 
@@ -122,6 +116,7 @@ def custom_tool_node(state):
         for tool_call in last_message.tool_calls:
             function_name = tool_call["name"]
             params = tool_call.get("args", {})
+            print("Performing tool call:", function_name + " with params:", params)
             # Get the tool function from your tools list or a mapping
             tool_map = {
                 "current_date": current_date,

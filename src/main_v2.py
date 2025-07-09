@@ -36,8 +36,8 @@ def main_bot_flow_decision(state: ScrumAgentTicketProcessorState):
 def stage_flow_decision(state):
     current_stage_id = state["ticket_processing_current_stage"]
     current_stage = state["ticket_processing_stages"][current_stage_id]
-    # if current_stage_id == 2:
-    #     breakpoint()  # For debugging purposes, remove in production
+    if current_stage_id == "due_date_check":
+        breakpoint()  # For debugging purposes, remove in production
     return current_stage["phase"]
 
 
@@ -45,11 +45,13 @@ graph = StateGraph(ScrumAgentTicketProcessorState)
 graph.add_node("basic_info_custom_tool_node", custom_tool_node)
 graph.add_node("plan_for_the_day_custom_tool_node", custom_tool_node)
 graph.add_node("blocker_check_custom_tool_node", custom_tool_node)
+graph.add_node("due_date_check_custom_tool_node", custom_tool_node)
 graph.add_node("confirm_summary_custom_tool_node", custom_tool_node)
 
 graph.add_node("basic_info", lambda state: execute_stage(state, llm))
 graph.add_node("plan_for_the_day", lambda state: execute_stage(state, llm))
 graph.add_node("blocker_check", lambda state: execute_stage(state, llm))
+graph.add_node("due_date_check", lambda state: execute_stage(state, llm))
 graph.add_node("summarize_conversation", lambda state: summarize_conversation_node(state, llm))
 graph.add_node("confirm_summary", lambda state: execute_stage(state, llm))
 graph.add_node("ticket_processing_end_node", ticket_processing_end_node)
@@ -87,12 +89,26 @@ graph.add_conditional_edges(
     {
         TicketProcessorPhase.NOT_STARTED: "blocker_check",
         TicketProcessorPhase.IN_PROGRESS: "blocker_check",
-        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "summarize_conversation",
+        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "due_date_check",
         TicketProcessorPhase.TOOLS_CALL: "blocker_check_custom_tool_node",
         TicketProcessorPhase.END_CONVERSATION: "ticket_processing_end_node",
         TicketProcessorPhase.COMPLETED: "ticket_processing_end_node",
     }
 )
+
+graph.add_conditional_edges(
+    "due_date_check",
+    stage_flow_decision,
+    {
+        TicketProcessorPhase.NOT_STARTED: "due_date_check",
+        TicketProcessorPhase.IN_PROGRESS: "due_date_check",
+        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "summarize_conversation",
+        TicketProcessorPhase.TOOLS_CALL: "due_date_check_custom_tool_node",
+        TicketProcessorPhase.END_CONVERSATION: "ticket_processing_end_node",
+        TicketProcessorPhase.COMPLETED: "ticket_processing_end_node",
+    }
+)
+
 graph.add_edge("summarize_conversation", "confirm_summary")
 graph.add_conditional_edges(
     "confirm_summary",
@@ -110,6 +126,7 @@ graph.add_edge("ticket_processing_end_node", END)
 graph.add_edge("basic_info_custom_tool_node", "basic_info")
 graph.add_edge("plan_for_the_day_custom_tool_node", "plan_for_the_day")
 graph.add_edge("blocker_check_custom_tool_node", "blocker_check")
+graph.add_edge("due_date_check_custom_tool_node", "due_date_check")
 graph.add_edge("confirm_summary_custom_tool_node", "confirm_summary")
 subgraph_app = graph.compile()
 
@@ -140,40 +157,41 @@ initial_state = {
     "ticket_processing_current_stage": "basic_info",
     "ticket_processing_stages": {
         "basic_info": {
-            "id": 0,
             "node": "basic_info",
             "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": -1,
+            "next_stage_id": "",
             "messages": []
         },
         "plan_for_the_day": {
-            "id": 1,
             "node": "plan_for_the_day",
             "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": -1,
+            "next_stage_id": "",
             "messages": []
         },
         "blocker_check": {
-            "id": 2,
             "node": "blocker_check",
             "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": -1,
+            "next_stage_id": "",
+            "messages": []
+        },
+        "due_date_check": {
+            "node": "due_date_check",
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": "",
             "messages": []
         },
         "summarize_conversation": {
-            "id": 3,
             "node": "summarize_conversation",
             "summary": "",
             "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": -1,
+            "next_stage_id": "",
             "messages": []
         },
         "confirm_summary": {
-            "id": 4,
             "node": "confirm_summary",
             "messages": [],
             "phase": TicketProcessorPhase.NOT_STARTED,
-            "next_stage_id": -1
+            "next_stage_id": ""
         }
     }
 }

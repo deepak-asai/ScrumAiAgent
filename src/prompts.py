@@ -1,6 +1,9 @@
 from langchain_core.messages import HumanMessage, AIMessage
 from models import ScrumAgentTicketProcessorState
 from langchain_core.prompts import PromptTemplate
+from datetime import datetime
+from tools import current_date
+
 import json
 
 def ticket_processor_base_prompt(state: ScrumAgentTicketProcessorState) -> str:
@@ -61,29 +64,73 @@ def blocker_check_prompt(state: ScrumAgentTicketProcessorState) -> str:
     If the user mentions any blockers:
     - Ask if you should update the ticket status to 'Blocked'.
         - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'Blocked'.
-
     Ask the user if they want to add a comment to the ticket about the blockers.
         - If the user agrees, use the 'add_comment' tool to add the comment.
 
     If the user does not mention any blockers and if the status of the ticket is 'To Do', you can skip this step.
 
-    If the ticket status is NOT 'In Progress', ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
-        - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'In Progress'.
+    If the ticket status is in 'TO DO', ask the user if you can update the status of the ticket to 'In Progress' since they are working on it.
+        - If the user agrees, you MUST use the 'update_status' tool to update the ticket status to 'In Progress'. Also update the start date to today's date (YYYY-MM-DD) using the 'update_ticket_dates' tool.
+        - If the user does not agree, do not update the status.
 
-    If the ticket status is already 'In Progress', do NOT ask to update the status again.
+    If the ticket status is already 'In Progress', do not ask to update the status again, but you must still ask the user about blockers.
 
-    After performing the above steps, respond ONLY with this JSON (do not include any other text, explanation, or formatting):
+    Respond with ONLY the following JSON. Do not include any other text, explanation, or formatting.
     {{
         "command": "proceed_to_next_stage",
         "args": {{
-            "next_stage_id": "summarize_conversation"
+            "next_stage_id": "due_date_check"
         }}
     }}
     """
 
+def due_date_check_prompt(state: ScrumAgentTicketProcessorState) -> str:
+    ticket = state["current_ticket"]
+    due_date_str = ticket.get("due_date")
+
+    if due_date_str is None:
+        return """
+        Note: The due date for this ticket is not set. Ask the user to provide a due date. You MUST use the tool `update_ticket_dates` to add the due to the ticket.
+        Once the due date is set, respond with ONLY the following JSON. Do not include any other text, explanation, or formatting.
+        {
+            "command": "proceed_to_next_stage",
+            "args": {
+                "next_stage_id": "summarize_conversation"
+            }
+        }
+        """
+    today = datetime.strptime(current_date.invoke({}), "%Y-%m-%d").date()
+
+    due_date = datetime.strptime(due_date_str, "%Y-%m-%d").date()
+    if (due_date - today).days <= 2:
+        return (
+            f"""
+            Note: The due date for this ticket is {due_date_str}, which is approaching soon.
+            Ask the user if this due date is acceptable and if they will be able to complete the ticket on time.
+            If not, prompt the user to provide a new due date and offer to update it using the tool.
+            Once the user confirms the due date, respond with ONLY the following JSON. Do not include any other text, explanation, or formatting.
+            {{
+                "command": "proceed_to_next_stage",
+                "args": {{
+                    "next_stage_id": "summarize_conversation"
+                }}
+            }}
+            """
+        )
+    
+    return """
+    Respond with ONLY the following JSON. Do not include any other text, explanation, or formatting
+    {
+        "command": "proceed_to_next_stage",
+        "args": {
+            "next_stage_id": "summarize_conversation"
+        }
+    }
+    """
+
 def summarize_conversation_prompt(state: ScrumAgentTicketProcessorState) -> str:
     all_messages = []
-    stages_to_pick_for_summary = ["basic_info", "plan_for_the_day", "blocker_check"]
+    stages_to_pick_for_summary = ["basic_info", "plan_for_the_day", "blocker_check", "due_date_check"]
 
     for stage in stages_to_pick_for_summary:
         for msg in state["ticket_processing_stages"][stage].get("messages", []):
