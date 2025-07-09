@@ -8,8 +8,8 @@ def current_date() -> str:
     """
     Returns today's date in ISO format.
     """
-    return date.today().isoformat()
-    # return "2025-07-09"
+    # return date.today().isoformat()
+    return "2025-07-09"
 
 @tool
 def fetch_comments(ticket_id: str) -> list:

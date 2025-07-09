@@ -36,8 +36,6 @@ def main_bot_flow_decision(state: ScrumAgentTicketProcessorState):
 def stage_flow_decision(state):
     current_stage_id = state["ticket_processing_current_stage"]
     current_stage = state["ticket_processing_stages"][current_stage_id]
-    if current_stage_id == "due_date_check":
-        breakpoint()  # For debugging purposes, remove in production
     return current_stage["phase"]
 
 

@@ -14,3 +14,23 @@ def deserialize_system_command(json_str: str) -> SystemCommand:
     if "args" not in data:
         data["args"] = None  # or data["args"] = {}
     return cast(SystemCommand, data)
+
+def is_json(string: str) -> bool:
+    """
+    Check if a string is valid JSON.
+    Returns True if valid, False otherwise.
+    """
+    try:
+        json.loads(string)
+        return True
+    except ValueError:
+        return False
+    
+def print_ai_response(response_content: str):
+    """
+    Print the AI response in a formatted way.
+    """
+    if is_json(response_content) or response_content == "":
+        # If the response is JSON or empty, we don't print it directly
+        return
+    print(f"\n🤖 AI: {response_content}")

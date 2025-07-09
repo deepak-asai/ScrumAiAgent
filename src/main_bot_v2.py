@@ -2,7 +2,7 @@ import json
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from jira_service import JiraService, Ticket
 from models import Ticket, ScrumAgentTicketProcessorState, MainBotPhase
-from helpers import deserialize_system_command
+from helpers import deserialize_system_command, print_ai_response
 
 def fetch_jira_tickets(user_id) -> list[Ticket]:
     """Fetch Jira tickets for a given user using Jira REST API."""
@@ -23,13 +23,15 @@ def main_bot(agent_state: ScrumAgentTicketProcessorState, llm=None):
         else "This is a new conversation. Start by greeting the user and helping them choose a ticket. Give a small introduction about the bot and its purpose."
     )
 
-    restarted_bot_prompt = f"""
+    restarted_bot_prompt = (f"""
     - Previous ticket discussion is complete. This is a continuation of the scrum meeting.
     - Ask the user which ticket they want to discuss next, or if they want to end the conversation.
     - Recently processed tickets: {agent_state["recently_processed_ticket_ids"] or []}
         (Show these at the end of the list. Do not mention them explicitly.)
     - If the user selects a recently discussed ticket, confirm if they want to continue with it or choose a different ticket.
-    """
+    """ if agent_state['main_bot_phase'] == MainBotPhase.RESTARTED
+        else ""
+    )
 
     prompt = f"""
     You are an agent conducting a scrum meeting. Speak as the user's manager. {conversation_note}
@@ -71,15 +73,15 @@ def main_bot(agent_state: ScrumAgentTicketProcessorState, llm=None):
     {tickets_str}
     """
 
+    # breakpoint()
     if agent_state["main_bot_phase"] == MainBotPhase.RESTARTED:
         agent_state["main_bot_messages"] = []
 
-    if agent_state["main_bot_phase"] == MainBotPhase.NOT_STARTED or MainBotPhase.RESTARTED:
-        agent_state["main_bot_messages"].append(SystemMessage(content=prompt))
     
     if agent_state["main_bot_phase"] in [MainBotPhase.NOT_STARTED, MainBotPhase.RESTARTED]:
+        agent_state["main_bot_messages"].append(SystemMessage(content=prompt))
         response = llm.invoke(agent_state["main_bot_messages"])
-        print(f"\n👤 AI: {response.content}")
+        print_ai_response(response.content)
         return {
             "main_bot_phase": MainBotPhase.IN_PROGRESS,
             "recently_processed_ticket_ids": agent_state["recently_processed_ticket_ids"],
@@ -90,7 +92,7 @@ def main_bot(agent_state: ScrumAgentTicketProcessorState, llm=None):
     agent_state["main_bot_messages"].append(HumanMessage(content=user_input))
 
     response = llm.invoke(agent_state["main_bot_messages"])
-    print(f"\n👤 AI: {response.content}")
+    print_ai_response(response.content)
     try:
         systemCommand = deserialize_system_command(response.content)
         if systemCommand["command"] == "ticket_chosen" and "ticket_id" in systemCommand["args"]:
