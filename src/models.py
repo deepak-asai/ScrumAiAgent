@@ -66,6 +66,12 @@ def ticket_processor_initial_stages() -> ScrumAgentTicketProcessorState:
             "next_stage_id": "",
             "messages": []
         },
+        "previous_progress_made": {
+            "node": "previous_progress_made",
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": "",
+            "messages": []
+        },
         "plan_for_the_day": {
             "node": "plan_for_the_day",
             "phase": TicketProcessorPhase.NOT_STARTED,
@@ -93,6 +99,12 @@ def ticket_processor_initial_stages() -> ScrumAgentTicketProcessorState:
         },
         "confirm_summary": {
             "node": "confirm_summary",
+            "messages": [],
+            "phase": TicketProcessorPhase.NOT_STARTED,
+            "next_stage_id": ""
+        },
+        "additional_help": {
+            "node": "additional_help",
             "messages": [],
             "phase": TicketProcessorPhase.NOT_STARTED,
             "next_stage_id": ""

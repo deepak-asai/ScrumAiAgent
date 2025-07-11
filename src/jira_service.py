@@ -175,7 +175,8 @@ class JiraService:
 
 # Example usage:
 # jira_service = JiraService.get_instance()
-# jira_service.delete_all_comments("APP-4")  # Replace with your actual issue key
+# jira_service.delete_all_comments("APP-1")
+# jira_service.delete_all_comments("APP-4")
 # jira_service.update_ticket_dates(
 #     issue_key="APP-1",  # Replace with your actual issue key
 #     start_date="2025-10-01",

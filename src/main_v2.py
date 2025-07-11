@@ -41,17 +41,21 @@ def stage_flow_decision(state):
 
 graph = StateGraph(ScrumAgentTicketProcessorState)
 graph.add_node("basic_info_custom_tool_node", custom_tool_node)
+graph.add_node("previous_progress_made_custom_tool_node", custom_tool_node)
 graph.add_node("plan_for_the_day_custom_tool_node", custom_tool_node)
 graph.add_node("blocker_check_custom_tool_node", custom_tool_node)
 graph.add_node("due_date_check_custom_tool_node", custom_tool_node)
 graph.add_node("confirm_summary_custom_tool_node", custom_tool_node)
+graph.add_node("additional_help_node_custom_tool_node", custom_tool_node)
 
 graph.add_node("basic_info", lambda state: execute_stage(state, llm))
+graph.add_node("previous_progress_made", lambda state: execute_stage(state, llm))
 graph.add_node("plan_for_the_day", lambda state: execute_stage(state, llm))
 graph.add_node("blocker_check", lambda state: execute_stage(state, llm))
 graph.add_node("due_date_check", lambda state: execute_stage(state, llm))
 graph.add_node("summarize_conversation", lambda state: summarize_conversation_node(state, llm))
 graph.add_node("confirm_summary", lambda state: execute_stage(state, llm))
+graph.add_node("additional_help_node", lambda state: execute_stage(state, llm))
 graph.add_node("ticket_processing_end_node", ticket_processing_end_node)
 
 graph.set_entry_point("basic_info")
@@ -61,8 +65,21 @@ graph.add_conditional_edges(
     {
         TicketProcessorPhase.NOT_STARTED: "basic_info",
         TicketProcessorPhase.IN_PROGRESS: "basic_info",
-        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "plan_for_the_day",
+        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "previous_progress_made",
         TicketProcessorPhase.TOOLS_CALL: "basic_info_custom_tool_node",  # This will call the tool node
+        TicketProcessorPhase.END_CONVERSATION: END,  # This will end the conversation
+        TicketProcessorPhase.COMPLETED: END,  # This will end the conversation
+    }
+)
+
+graph.add_conditional_edges(
+    "previous_progress_made",
+    stage_flow_decision,
+    {
+        TicketProcessorPhase.NOT_STARTED: "previous_progress_made",
+        TicketProcessorPhase.IN_PROGRESS: "previous_progress_made",
+        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "plan_for_the_day",
+        TicketProcessorPhase.TOOLS_CALL: "previous_progress_made_custom_tool_node",
         TicketProcessorPhase.END_CONVERSATION: END,  # This will end the conversation
         TicketProcessorPhase.COMPLETED: END,  # This will end the conversation
     }
@@ -114,12 +131,25 @@ graph.add_conditional_edges(
     {
         TicketProcessorPhase.NOT_STARTED: "confirm_summary",
         TicketProcessorPhase.IN_PROGRESS: "confirm_summary",
-        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "ticket_processing_end_node",
+        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "additional_help_node",
         TicketProcessorPhase.TOOLS_CALL: "confirm_summary_custom_tool_node",
         TicketProcessorPhase.END_CONVERSATION: "ticket_processing_end_node",
         TicketProcessorPhase.COMPLETED: "ticket_processing_end_node",
     }
 )
+graph.add_conditional_edges(
+    "additional_help_node",
+    stage_flow_decision,
+    {
+        TicketProcessorPhase.NOT_STARTED: "additional_help_node",
+        TicketProcessorPhase.IN_PROGRESS: "additional_help_node",
+        TicketProcessorPhase.PROCEED_TO_NEXT_STAGE: "ticket_processing_end_node",
+        TicketProcessorPhase.TOOLS_CALL: "additional_help_node_custom_tool_node",
+        TicketProcessorPhase.END_CONVERSATION: "ticket_processing_end_node",
+        TicketProcessorPhase.COMPLETED: "ticket_processing_end_node",
+    }
+)
+
 graph.add_edge("ticket_processing_end_node", END)
 graph.add_edge("basic_info_custom_tool_node", "basic_info")
 graph.add_edge("plan_for_the_day_custom_tool_node", "plan_for_the_day")

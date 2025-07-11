@@ -48,8 +48,8 @@ def main_bot(agent_state: ScrumAgentTicketProcessorState, llm=None):
         Summary: <summary>
         Status: <status>
         Priority: <priority>
-        Start Date: <start_date>
-        Due Date: <due_date>
+        Start Date: <start_date> or "Not Set"
+        Due Date: <due_date> or "Not Set"
     - Order the tickets as follows:
         1. Tickets with status "In Progress"
         2. Tickets with status "To Do"
