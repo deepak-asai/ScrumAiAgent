@@ -17,7 +17,6 @@ def main_bot(agent_state: TicketProcessorAgentState, main_llm=None):
     tickets = fetch_jira_tickets("deepak.a.1996@gmail.com")
     tickets_str = json.dumps(tickets, indent=2)
 
-    breakpoint()  # For debugging purposes, remove in production
     conversation_note = (
         """
         This is a continuation of a previous conversation. Continue helping the user with their tickets. Ask the user what is the next ticket they want to discuss about any other ticket or else if you could end the conversation. "

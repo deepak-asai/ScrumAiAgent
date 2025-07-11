@@ -5,11 +5,14 @@ from prompts import ticket_processor_base_prompt, ticket_processor_stage_prompt
 from helpers import deserialize_system_command, is_json, print_ai_response
 from tools import (
     current_date,
+    parse_to_iso_date,
     fetch_comments,
     add_comment,
     update_status,
     update_ticket_dates,
 )
+from jira_service import JiraService  # Import here to avoid circular imports
+
 
 def handle_json_response(state: ScrumAgentTicketProcessorState, response_content: str):
     current_stage_id = state["ticket_processing_current_stage"]
@@ -32,6 +35,7 @@ def handle_json_response(state: ScrumAgentTicketProcessorState, response_content
 def handler_not_started_phase(state: ScrumAgentTicketProcessorState, llm=None):
     current_stage_id = state["ticket_processing_current_stage"]
     current_stage = state["ticket_processing_stages"][current_stage_id]
+    update_ticket_info(state)
 
     ticket_processor_prompt = ticket_processor_base_prompt(state)
     current_stage_prompt = ticket_processor_stage_prompt(state, current_stage["node"])
@@ -49,8 +53,6 @@ def invoke_llm_call(state: ScrumAgentTicketProcessorState, llm=None):
     current_stage_id = state["ticket_processing_current_stage"]
     current_stage = state["ticket_processing_stages"][current_stage_id]
 
-    # if current_stage_id == 4:
-    #     breakpoint()
     response = llm.invoke(current_stage["messages"])
     print_ai_response(response.content)
     current_stage["messages"].append(response)
@@ -126,6 +128,7 @@ def custom_tool_node(state):
             print(f"\n 🔧 USING TOOLS: {function_name}")
             tool_map = {
                 "current_date": current_date,
+                "parse_to_iso_date": parse_to_iso_date,
                 "fetch_comments": fetch_comments,
                 "add_comment": add_comment,
                 "update_status": update_status,
@@ -141,3 +144,10 @@ def custom_tool_node(state):
 
 def is_last_message_tool_call(messages) -> bool:
     return isinstance(messages[-1], ToolMessage)
+
+def update_ticket_info(state: ScrumAgentTicketProcessorState):
+    jira = JiraService.get_instance()
+    ticket_id = state["current_ticket"]["id"]
+    latest_ticket = jira.fetch_ticket_by_id(ticket_id)
+    state["current_ticket"] = latest_ticket
+    return state

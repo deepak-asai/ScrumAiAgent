@@ -140,10 +140,42 @@ class JiraService:
         response = requests.put(url, headers=self.headers, auth=self.auth, json=payload)
         response.raise_for_status()
         return response.status_code == 204
+    
+    def delete_all_comments(self, issue_key: str) -> None:
+        """
+        Delete all comments from a Jira ticket.
+        """
+        comments = self.fetch_ticket_comments(issue_key)
+        for comment in comments:
+            comment_id = comment["id"]
+            url = f"{self.base_url}/rest/api/2/issue/{issue_key}/comment/{comment_id}"
+            response = requests.delete(url, headers=self.headers, auth=self.auth)
+            response.raise_for_status()
+
+    def fetch_ticket_by_id(self, issue_key: str) -> Ticket:
+        """
+        Fetch a single Jira ticket by its issue key.
+        """
+        url = f"{self.base_url}/rest/api/2/issue/{issue_key}"
+        response = requests.get(url, headers=self.headers, auth=self.auth)
+        response.raise_for_status()
+        issue = response.json()
+        fields = issue.get("fields", {})
+        ticket: Ticket = {
+            "id": issue.get("key", ""),
+            "title": fields.get("summary", ""),
+            "description": fields.get("description", ""),
+            "priority": fields.get("priority", {}).get("name") if fields.get("priority") else None,
+            "status": fields.get("status", {}).get("name") if fields.get("status") else None,
+            "start_date": fields.get("customfield_10015"),
+            "due_date": fields.get("duedate"),
+        }
+        return ticket
 
 
 # Example usage:
 # jira_service = JiraService.get_instance()
+# jira_service.delete_all_comments("APP-4")  # Replace with your actual issue key
 # jira_service.update_ticket_dates(
 #     issue_key="APP-1",  # Replace with your actual issue key
 #     start_date="2025-10-01",
@@ -167,3 +199,12 @@ class JiraService:
 
 # import json
 # print(json.dumps(fields, indent=2))
+
+# comments_to_add =[
+#     "Please ensure the login flow covers both email/password and social login options as discussed in the last sprint planning.",
+#     "The UX team has provided updated wireframes for the login screens. Please refer to the latest designs in Figma.",
+#     "Let's make sure error messages are clear and actionable for users who enter incorrect credentials."
+# ]
+# jira_service = JiraService.get_instance()
+# for comment in comments_to_add:
+#     jira_service.add_comment("APP-1", comment)  # Replace with your actual issue key

@@ -1,4 +1,5 @@
 from langchain_core.tools import tool
+from dateutil import parser
 from jira_service import JiraService
 from datetime import date
 
@@ -8,8 +9,20 @@ def current_date() -> str:
     """
     Returns today's date in ISO format.
     """
-    # return date.today().isoformat()
-    return "2025-07-09"
+    return date.today().isoformat()
+
+@tool
+def parse_to_iso_date(date_str: str) -> str:
+    """
+    Parses a date string in any common format and returns it in ISO format (YYYY-MM-DD).
+    Example: "July 20th, 2025" -> "2025-07-20"
+    """
+    try:
+        dt = parser.parse(date_str)
+        return dt.date().isoformat()
+    except Exception as e:
+        return f"Invalid date format: {e}"
+
 
 @tool
 def fetch_comments(ticket_id: str) -> list:

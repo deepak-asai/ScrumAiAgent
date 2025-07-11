@@ -1,4 +1,6 @@
 import json
+import os
+from dotenv import load_dotenv
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from jira_service import JiraService, Ticket
 from models import Ticket, ScrumAgentTicketProcessorState, MainBotPhase
@@ -11,8 +13,8 @@ def fetch_jira_tickets(user_id) -> list[Ticket]:
 
 
 def main_bot(agent_state: ScrumAgentTicketProcessorState, llm=None):
-    # breakpoint()  # For debugging purposes, remove in production
-    tickets = fetch_jira_tickets("deepak.a.1996@gmail.com")
+    load_dotenv()
+    tickets = fetch_jira_tickets(os.getenv("CURRENT_USER_EMAIL"))
     tickets_str = json.dumps(tickets, indent=2)
 
     conversation_note = (
@@ -26,8 +28,8 @@ def main_bot(agent_state: ScrumAgentTicketProcessorState, llm=None):
     restarted_bot_prompt = (f"""
     - Previous ticket discussion is complete. This is a continuation of the scrum meeting.
     - Ask the user which ticket they want to discuss next, or if they want to end the conversation.
-    - Recently processed tickets: {agent_state["recently_processed_ticket_ids"] or []}
-        (Show these at the end of the list. Do not mention them explicitly.)
+    - Recently discussed tickets: {agent_state["recently_processed_ticket_ids"] or []}
+        (Do not show these tickets in the list unless the user asks about it. Do not mention them explicitly.)
     - If the user selects a recently discussed ticket, confirm if they want to continue with it or choose a different ticket.
     """ if agent_state['main_bot_phase'] == MainBotPhase.RESTARTED
         else ""
@@ -73,7 +75,6 @@ def main_bot(agent_state: ScrumAgentTicketProcessorState, llm=None):
     {tickets_str}
     """
 
-    # breakpoint()
     if agent_state["main_bot_phase"] in [MainBotPhase.NOT_STARTED, MainBotPhase.RESTARTED]:
         agent_state["main_bot_messages"].append(SystemMessage(content=prompt))
         response = llm.invoke(agent_state["main_bot_messages"])

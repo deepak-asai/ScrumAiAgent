@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from models import ScrumAgentTicketProcessorState, TicketProcessorPhase, MainBotPhase, ticket_processor_initial_stages
-from tools import current_date, fetch_comments, add_comment, update_status, update_ticket_dates
+from tools import current_date, parse_to_iso_date,  fetch_comments, add_comment, update_status, update_ticket_dates
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from helpers import deserialize_system_command
@@ -13,7 +13,7 @@ from prompts import ticket_processor_stage_prompt, ticket_processor_base_prompt
 from main_bot_v2 import main_bot
 from ticket_processor_bot_v2 import execute_stage, custom_tool_node, summarize_conversation_node, ticket_processing_end_node
 
-tools = [current_date, fetch_comments, add_comment, update_status, update_ticket_dates]
+tools = [current_date, parse_to_iso_date,  fetch_comments, add_comment, update_status, update_ticket_dates]
 llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.5).bind_tools(tools)
 
 def main_bot_flow_decision(state: ScrumAgentTicketProcessorState):
@@ -156,4 +156,4 @@ initial_state = {
     "ticket_processing_stages": ticket_processor_initial_stages()
 }
 
-main_graph_app.invoke(initial_state)
+main_graph_app.invoke(initial_state, {"recursion_limit": 1000})
