@@ -41,24 +41,47 @@ def basic_info_prompt(state: ScrumAgentTicketProcessorState) ->str:
         "reply": <reply to the user for the conversation. Do not ask any questions in the reply.>,
         "command": "proceed_to_next_stage",
         "args": {{
-            "next_stage_id": "plan_for_the_day"
+            "next_stage_id": "previous_progress_made"
         }}
     }}
     """
 
+def previous_progress_made_prompt(state: ScrumAgentTicketProcessorState) -> str:
+    if str(state["current_ticket"]["status"]) == "In Progress":
+        return """
+        Ask the user what progress has been made on the ticket since the last update. Wait for the user's response.
+        Do not provide any additional context or information about the ticket unless the user specifically asks for it.
+        Do not use any tools unless the user specifically requests something that requires a tool.
+
+        After the question is answered, respond with ONLY the following JSON. Do not include any other text, explanation, or formatting.
+        The reply field should contain acknowledgment of the user's response. Do not mention anything about status updates or blockers in the reply.
+        {
+            "reply": <Reply for the user. Do not ask any questions in the reply. Do not mention anything about status updates or blockers in the reply.>,
+            "command": "proceed_to_next_stage",
+            "args": {
+                "next_stage_id": "plan_for_the_day"
+            }
+        }
+        """
+    
+    return """
+    Respond with ONLY the following JSON. Do not include any other text, explanation, or formatting
+    {
+        "command": "proceed_to_next_stage",
+        "args": {
+            "next_stage_id": "plan_for_the_day"
+        }
+    }
+    """
+
 def plan_for_the_day_prompt(state: ScrumAgentTicketProcessorState) -> str:
     return f"""
-    Ticket status: {state["current_ticket"]["status"]}
-
-    If the ticket status is 'In Progress', first ask the user what progress has been made on the ticket since the last update.
-    After the user responds, acknowledge their answer with a brief reply, then ask what their plan is for the day regarding this ticket.
-
-    Ask these questions one at a time, waiting for the user's response before proceeding to the next question.
+    Ask the user what their plan is for the day regarding this ticket. Wait for the user's response.
 
     Do not provide any additional context or information about the ticket unless the user specifically asks for it.
     Do not use any tools unless the user specifically requests something that requires a tool.
 
-    After the user has answered all questions, respond ONLY with the following JSON. Do not include any other text, explanation, or formatting. The reply field should contain a reply to the user for the conversation.
+    Only after you have received answers to all required questions, respond ONLY with the following JSON. Do not include any other text, explanation, or formatting. The reply field should contain a reply to the user for the conversation.
     {{
         "reply": <reply to the user for the conversation. Do not ask any questions in the reply.>,
         "command": "proceed_to_next_stage",
@@ -68,6 +91,7 @@ def plan_for_the_day_prompt(state: ScrumAgentTicketProcessorState) -> str:
     }}
     """
 
+# TODO: Change this to multiple stages
 def blocker_check_prompt(state: ScrumAgentTicketProcessorState) -> str:
     return """
     You are conducting a scrum meeting about the current ticket.
@@ -78,13 +102,14 @@ def blocker_check_prompt(state: ScrumAgentTicketProcessorState) -> str:
             - If the user agrees, use the 'update_status' tool to update the ticket status to 'Blocked'.
         - Ask if the user wants to add a comment about the blockers.
             - If the user agrees, use the 'add_comment' tool to add the comment.
-    3. If the ticket status is 'To Do' and the user does not mention blockers, ask if you can update the status to 'In Progress' since they are working on it.
+    3. If the ticket status is 'To Do' and the user does not mention blockers:
+        - First, ASK the user if you can update the status of this ticket to 'In Progress' since they are working on it.
+        - WAIT for the user's response.
         - If the user agrees, use the 'update_status' tool to update the ticket status to 'In Progress' and update the start date to today's date (YYYY-MM-DD) using the 'update_ticket_dates' tool.
         - If the user does not agree, do not update the status.
     4. If the ticket status is already 'In Progress', do not ask to update the status again, but you must still ask the user about blockers.
 
     Ask these questions one at a time, waiting for the user's response before proceeding to the next question. Only after all questions are answered and actions are taken, respond with ONLY the following JSON. Do not include any other text, explanation, or formatting.
-
     The reply field should contain a reply based of the conversation with the user. Do not mention anything about status updates or blockers in the reply.
     {
         "reply": <Reply for the user. Do not ask any questions in the reply. Do not mention anything about status updates or blockers in the reply.>,
@@ -120,7 +145,8 @@ def due_date_check_prompt(state: ScrumAgentTicketProcessorState) -> str:
             Note: The due date for this ticket is {due_date_str}, which is approaching soon.
             Ask the user if this due date is acceptable and if they will be able to complete the ticket on time.
             If not, prompt the user to provide a new due date and offer to update it using the tool.
-            Once the user confirms the due date, respond with ONLY the following JSON. Do not include any other text, explanation, or formatting. . The reply field should contain the reply to the user for the conversation.  Do not ask any questions in the reply.
+            Wait for the user's response and confirmation.
+            Do not return any JSON yet. Only after the user confirms the due date or provides a new one, respond with ONLY the following JSON (do not include any other text, explanation, or formatting):
             {{
                 "reply": <reply to the user for the conversation. Do not ask any questions in the reply.>,
                 "command": "proceed_to_next_stage",
@@ -154,7 +180,7 @@ def summarize_conversation_prompt(state: ScrumAgentTicketProcessorState) -> str:
     # Build the summary prompt
     summary_prompt = (
         "Summarize the following scrum conversation between the user and the AI agent as the user's manager. "
-        "Highlight the ticket, actions taken, blockers, and next steps if any.\n\n"
+        "Highlight the ticket, actions taken, blockers, and next steps if any. Do not make up next steps. \n\n"
         "Conversation:\n"
         + "\n".join(all_messages)
         + "\n\nSummary:"
@@ -163,6 +189,7 @@ def summarize_conversation_prompt(state: ScrumAgentTicketProcessorState) -> str:
 
 def confirm_summary_prompt(state: ScrumAgentTicketProcessorState) -> str:
     return f"""
+    Tell the user that we have reached the end of the scrum meeting. 
     The following is a summary of the scrum conversation between the user and the AI agent. 
     Show the summary below to the user exactly as it appears. Do not resolve or replace any words like 'today'. Do not call any tools to resolve placeholders in the summary text.
 
@@ -177,6 +204,23 @@ def confirm_summary_prompt(state: ScrumAgentTicketProcessorState) -> str:
     After performing the above steps, the AI agent must respond ONLY with the following JSON (do not include any other text, explanation, or formatting). The reply field should contain the reply to the user for the conversation.
     {{
         "reply": <reply to the user for the conversation>,
-        "command": "end_conversation"
+        "command": "proceed_to_next_stage",
+        "args": {{
+            "next_stage_id": "additional_help"
+        }}
     }}
+    """
+
+def additional_help_prompt(state: ScrumAgentTicketProcessorState) -> str:
+    return """
+    The conversation about the tickets is almost over. Initiate the conversation by asking the user if they need any additional help with the current ticket or if they have any other questions.
+    Do not give any other context or information about the ticket unless the user specifically asks for it.
+    Use the tools available to you to assist the user. If the user has any questions, answer them using the tools.
+    If the user does has additional questions and if he responds with No, respond with ONLY the following JSON. Do not include any other text, explanation, or formatting.
+    {
+        "command": "proceed_to_next_stage",
+        "args": {
+            "next_stage_id": "ticket_processing_end_node"
+        }
+    }
     """

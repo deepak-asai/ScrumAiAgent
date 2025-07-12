@@ -177,6 +177,14 @@ class JiraService:
 # jira_service = JiraService.get_instance()
 # jira_service.delete_all_comments("APP-1")
 # jira_service.delete_all_comments("APP-4")
+# comments_to_add =[
+#     "Please ensure the login flow covers both email/password and social login options as discussed in the last sprint planning.",
+#     "The UX team has provided updated wireframes for the login screens. Please refer to the latest designs in Figma.",
+#     "Let's make sure error messages are clear and actionable for users who enter incorrect credentials."
+# ]
+# jira_service = JiraService.get_instance()
+# for comment in comments_to_add:
+#     jira_service.add_comment("APP-1", comment)  # Replace with your actual issue key
 # jira_service.update_ticket_dates(
 #     issue_key="APP-1",  # Replace with your actual issue key
 #     start_date="2025-10-01",
@@ -201,11 +209,3 @@ class JiraService:
 # import json
 # print(json.dumps(fields, indent=2))
 
-# comments_to_add =[
-#     "Please ensure the login flow covers both email/password and social login options as discussed in the last sprint planning.",
-#     "The UX team has provided updated wireframes for the login screens. Please refer to the latest designs in Figma.",
-#     "Let's make sure error messages are clear and actionable for users who enter incorrect credentials."
-# ]
-# jira_service = JiraService.get_instance()
-# for comment in comments_to_add:
-#     jira_service.add_comment("APP-1", comment)  # Replace with your actual issue key

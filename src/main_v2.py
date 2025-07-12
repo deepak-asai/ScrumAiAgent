@@ -187,3 +187,7 @@ initial_state = {
 }
 
 main_graph_app.invoke(initial_state, {"recursion_limit": 1000})
+
+# Draw the graphs to PNG files (optional, for visualization)
+# main_graph_app.get_graph().draw_png("main_bot.png")
+# subgraph_app.get_graph().draw_png("ticket_processing_bot.png")

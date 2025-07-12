@@ -5,8 +5,3 @@ python-dotenv
 requests
 ipython
 python-dateutil
-# pygraphviz
-# pip install pygraphviz --install-option="--include-path=$(brew --prefix graphviz)/include" --install-option="--library-path=$(brew --prefix graphviz)/lib"
-# export CFLAGS="-I$(brew --prefix graphviz)/include"
-# export LDFLAGS="-L$(brew --prefix graphviz)/lib"
-# pip install pygraphviz
